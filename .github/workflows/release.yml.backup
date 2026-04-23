@@ -209,20 +209,19 @@ jobs:
       matrix:
         channel: ${{ fromJson(needs.setup.outputs.channels) }}
       fail-fast: false   # one channel failing must not cancel others
-      max-parallel: 10   # FIX: Reduced from 20 to 10 to avoid Docker daemon overload
+      max-parallel: 20
 
     steps:
       - uses: actions/checkout@v4
 
       # Check disk space BEFORE building to avoid wasting time
-      # FIX: Increased minimum from 4GB to 6GB to account for build overhead
       - name: Check disk space
         run: |
           AVAIL_GB=$(df -BG . | awk 'NR==2{gsub(/G/,""); print $4}')
           echo "Disk available: ${AVAIL_GB}GB"
-          if [[ "$AVAIL_GB" -lt 6 ]]; then
-            echo "::error::Not enough disk space (${AVAIL_GB}GB < 6GB required for build + recording)"
-            echo "::error::Build needs ~2GB, recording needs ~3GB minimum, plus 1GB safety margin"
+          if [[ "$AVAIL_GB" -lt 4 ]]; then
+            echo "::error::Not enough disk space (${AVAIL_GB}GB < 4GB required for build + recording)"
+            echo "::error::Build needs ~1-2GB, recording needs ~2GB minimum"
             exit 1
           fi
           echo "✓ Sufficient disk space available"
@@ -241,14 +240,6 @@ jobs:
           go mod download
           go build -ldflags="-s -w" -o goondvr .
           echo "✓ Built: $(./goondvr --version 2>&1 || echo 'ok')"
-
-      # FIX: Added staggered start delay to avoid Docker daemon overload with max-parallel: 20
-      - name: Stagger container starts
-        run: |
-          # Random delay 0-30s to avoid all jobs starting FlareSolverr simultaneously
-          DELAY=$(( RANDOM % 31 ))
-          echo "Staggering start by ${DELAY}s to avoid Docker daemon overload..."
-          sleep "$DELAY"
 
       - name: Start FlareSolverr
         run: |
@@ -269,11 +260,9 @@ jobs:
           echo "✓ FlareSolverr container started"
           
           # Wait for FlareSolverr to be ready
-          # FIX: Extended timeout to 130s to ensure stabilization period completes
           echo "Waiting for FlareSolverr API..."
-          MAX_WAIT=130
+          MAX_WAIT=120
           ELAPSED=0
-          READY=false
           
           while [ $ELAPSED -lt $MAX_WAIT ]; do
             # Check if container is still running
@@ -300,8 +289,7 @@ jobs:
                 # Give it a few more seconds to fully stabilize
                 sleep 5
                 echo "✓ FlareSolverr is ready to use"
-                READY=true
-                break
+                exit 0
               else
                 echo "⚠️  Got response but invalid format: $TEST_RESP"
               fi
@@ -316,19 +304,14 @@ jobs:
             fi
           done
           
-          # FIX: Check if we actually succeeded before continuing
-          if [[ "$READY" != "true" ]]; then
-            echo "::error::FlareSolverr failed to start within ${MAX_WAIT}s"
-            echo ""
-            echo "Container status:"
-            docker ps -a | grep flaresolverr || echo "Container not found"
-            echo ""
-            echo "Recent container logs:"
-            docker logs flaresolverr 2>&1 | tail -50
-            exit 1
-          fi
-          
-          echo "✓ FlareSolverr fully initialized and ready"
+          echo "::error::FlareSolverr failed to start within ${MAX_WAIT}s"
+          echo ""
+          echo "Container status:"
+          docker ps -a | grep flaresolverr || echo "Container not found"
+          echo ""
+          echo "Recent container logs:"
+          docker logs flaresolverr 2>&1 | tail -50
+          exit 1
 
       # ── Offline streak ──────────────────────────────────────────────────
       # Tracks consecutive runs with zero recordings.  We use GitHub Actions
@@ -367,12 +350,10 @@ jobs:
           echo "╚══════════════════════════════════════════════════╝"
 
           # ── Guard: disk space ─────────────────────────────────────────
-          # FIX: Increased minimum from 2GB to 3GB to account for post-build state
           AVAIL_GB=$(df -BG . | awk 'NR==2{gsub(/G/,""); print $4}')
           echo "Disk available: ${AVAIL_GB}GB"
-          if [[ "$AVAIL_GB" -lt 3 ]]; then
-            echo "::error::Not enough disk space (${AVAIL_GB}GB < 3GB required)"
-            echo "::error::Recording needs ~2-3GB depending on duration and quality"
+          if [[ "$AVAIL_GB" -lt 2 ]]; then
+            echo "::error::Not enough disk space (${AVAIL_GB}GB < 2GB required)"
             exit 1
           fi
 
@@ -395,23 +376,12 @@ jobs:
           # Uses a flag file to coordinate with timeout command
           _MD="$MAX_DURATION"
           # Use unique flag file per channel to avoid conflicts
-          # FIX: Use $$ instead of $_ for process ID
           MONITOR_FLAG="/tmp/monitor_${USERNAME}_${SITE}_$$_$(date +%s)_flag"
           echo "0" > "$MONITOR_FLAG"  # 0 = running, 1 = monitor killed it
           export MONITOR_FLAG  # Make available to subshell
           
           # Store goondvr PID for precise killing
           GOONDVR_PID_FILE="/tmp/goondvr_${USERNAME}_${SITE}_$$.pid"
-          
-          # FIX: Trap handler to cleanup monitor process on any exit
-          cleanup_monitor() {
-            if [[ -n "${MONITOR_PID:-}" ]]; then
-              kill -TERM "$MONITOR_PID" 2>/dev/null || true
-              wait "$MONITOR_PID" 2>/dev/null || true
-            fi
-            rm -f "$MONITOR_FLAG" "$GOONDVR_PID_FILE" 2>/dev/null || true
-          }
-          trap cleanup_monitor EXIT INT TERM
           
           (
             trap 'exit 0' SIGTERM
@@ -551,14 +521,12 @@ jobs:
             
             # Wait for goondvr to finish
             wait "$GOONDVR_PID" || RC=$?
-            ACTUAL_RC=$RC
             
             # Check if monitor killed it (flag=1) or timeout killed it (RC=124)
-            # FIX: Preserve actual exit code for debugging, only override for logic flow
             MONITOR_KILLED=$(cat "$MONITOR_FLAG" 2>/dev/null || echo "0")
             if [[ "$MONITOR_KILLED" == "1" ]]; then
-              echo "  (killed by monitor due to disk/stall, actual RC=$ACTUAL_RC)"
-              RC=143  # Treat as SIGTERM for logic flow
+              echo "  (killed by monitor, not timeout)"
+              RC=143  # SIGTERM exit code
             fi
 
             VCOUNT=$(find videos -type f \( -name "*.ts" -o -name "*.mp4" \) 2>/dev/null | wc -l)
@@ -607,8 +575,10 @@ jobs:
             sleep $(( INTERVAL * 60 ))
           done
 
-          # FIX: Cleanup handled by trap, but ensure it runs
-          cleanup_monitor
+          # Clean up monitor, flag file, and PID file
+          kill -TERM "$MONITOR_PID" 2>/dev/null || true
+          wait  "$MONITOR_PID" 2>/dev/null || true
+          rm -f "$MONITOR_FLAG" "$GOONDVR_PID_FILE" 2>/dev/null || true
 
           # ── Summary ───────────────────────────────────────────────────
           TOTAL=$(find videos -type f \( -name "*.ts" -o -name "*.mp4" \) 2>/dev/null | wc -l)
@@ -621,40 +591,13 @@ jobs:
           echo "has-files=$HAS_FILES" >> "$GITHUB_OUTPUT"
 
       # ── Offline streak tracking ─────────────────────────────────────────
-      # FIX: Sanitize channel names for artifact naming (GitHub Actions restrictions)
-      - name: Sanitize channel identifier
-        if: always()
-        id: sanitize
-        run: |
-          USERNAME="${{ matrix.channel.username }}"
-          SITE="${{ matrix.channel.site }}"
-          # Replace any non-alphanumeric chars (except dash/underscore) with underscore
-          SAFE_USER=$(echo "$USERNAME" | tr -c '[:alnum:]-_' '_')
-          SAFE_SITE=$(echo "$SITE" | tr -c '[:alnum:]-_' '_')
-          ARTIFACT_ID="${SAFE_USER}-${SAFE_SITE}"
-          echo "artifact-id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
-          echo "Artifact ID: $ARTIFACT_ID"
-
       - name: Update offline streak
         if: always()
         id: streak
         run: |
           mkdir -p streak
-          USERNAME="${{ matrix.channel.username }}"
-          SITE="${{ matrix.channel.site }}"
-          STREAK_FILE="streak/${USERNAME}-${SITE}.txt"
-          
-          # FIX: Validate streak file format before parsing
-          PREV=0
-          if [[ -f "$STREAK_FILE" ]]; then
-            CONTENT=$(cat "$STREAK_FILE" 2>/dev/null || echo "")
-            if [[ "$CONTENT" =~ ^[0-9]+ ]]; then
-              PREV=$(echo "$CONTENT" | grep -oE '^[0-9]+')
-            else
-              echo "⚠️  Streak file corrupted, resetting to 0"
-            fi
-          fi
-          
+          STREAK_FILE="streak/${{ matrix.channel.username }}-${{ matrix.channel.site }}.txt"
+          PREV=$(grep -oE '^[0-9]+' "$STREAK_FILE" 2>/dev/null || echo "0")
           HAS="${{ steps.record.outputs.has-files || 'false' }}"
           if [[ "$HAS" == "true" ]]; then
             NEW=0
@@ -673,12 +616,11 @@ jobs:
           path: streak/
           key: streak-${{ matrix.channel.username }}-${{ matrix.channel.site }}-${{ github.run_id }}
 
-      # FIX: Use sanitized artifact name
       - name: Upload streak artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: streak-${{ steps.sanitize.outputs.artifact-id }}
+          name: streak-${{ matrix.channel.username }}-${{ matrix.channel.site }}
           path: streak/
           retention-days: 7
           if-no-files-found: ignore
@@ -776,44 +718,19 @@ jobs:
           echo "Files ready to upload:"
           ls -lh videos/mp4/ 2>/dev/null || echo "(none)"
           
-          # FIX: Enhanced verification - check both video AND audio streams
-          echo "::group::Final verification"
+          # Final verification
           TOTAL=$(find videos/mp4 -name "*.mp4" -type f | wc -l)
           STREAMABLE=0
-          WARNINGS=0
-          
           for f in videos/mp4/*.mp4; do
             [[ -f "$f" ]] || continue
-            
-            # Check video stream
-            VIDEO_OK=false
             if ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$f" >/dev/null 2>&1; then
-              VIDEO_OK=true
-            fi
-            
-            # Check audio stream (optional but warn if missing)
-            AUDIO_OK=false
-            if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$f" >/dev/null 2>&1; then
-              AUDIO_OK=true
-            fi
-            
-            if [[ "$VIDEO_OK" == "true" ]]; then
               STREAMABLE=$((STREAMABLE + 1))
-              if [[ "$AUDIO_OK" == "false" ]]; then
-                echo "⚠️  $(basename "$f"): video OK but no audio stream detected"
-                WARNINGS=$((WARNINGS + 1))
-              fi
             else
-              echo "❌ $(basename "$f"): video stream invalid or missing"
+              echo "⚠️  Warning: $(basename "$f") may not be streamable"
             fi
           done
-          
           echo ""
-          echo "Summary: $STREAMABLE/$TOTAL files with valid video streams"
-          if [[ "$WARNINGS" -gt 0 ]]; then
-            echo "⚠️  $WARNINGS file(s) missing audio streams"
-          fi
-          echo "::endgroup::"
+          echo "Summary: $STREAMABLE/$TOTAL files verified as streamable"
 
       # ── Upload to GoFile ────────────────────────────────────────────────
       - name: Upload to GoFile
@@ -868,13 +785,12 @@ jobs:
                 | jq -r '.data.servers[0].name // "store1"' 2>/dev/null || echo "$SERVER")
 
               # Dynamic timeout based on file size
-              # FIX: Align with job timeout (330 min) and cap at 300 min for safety
               # Assume minimum 0.5 MB/s upload speed (slow connection)
               # Add 60s overhead for API processing
               UL_TIMEOUT=$(awk -v size="$FSIZE" 'BEGIN{
                 t = int(size/524288) + 60;
                 if (t < 5) t = 5;        # Minimum 5 minutes
-                if (t > 300) t = 300;    # Maximum 5 hours (within job timeout)
+                if (t > 360) t = 360;    # Maximum 6 hours
                 print int(t)
               }')
               
@@ -925,7 +841,6 @@ jobs:
             jq ".recordings += [$REC] | .summary.total_recordings = (.recordings|length) | .summary.total_size_bytes = ([.recordings[].filesize_bytes]|add//0)" \
               "$REC_FILE" > "$REC_FILE.tmp" && mv "$REC_FILE.tmp" "$REC_FILE"
 
-            # FIX: Track Supabase logging failures for alerting
             # Log to Supabase if configured
             if [[ -n "$SUPABASE_URL" ]] && [[ -n "$SUPABASE_KEY" ]]; then
               SUPABASE_PAYLOAD=$(jq -n \
@@ -940,14 +855,12 @@ jobs:
                 -H "apikey: ${SUPABASE_KEY}" \
                 -H "Authorization: Bearer ${SUPABASE_KEY}" \
                 -H "Prefer: return=minimal" \
-                -d "$SUPABASE_PAYLOAD" 2>&1)
+                -d "$SUPABASE_PAYLOAD" 2>/dev/null || echo "")
               
-              SUPABASE_RC=$?
-              if [[ "$SUPABASE_RC" -eq 0 ]]; then
+              if [[ -n "$SUPABASE_RESP" ]] || [[ $? -eq 0 ]]; then
                 echo "  ✓ Logged to Supabase"
               else
-                echo "  ⚠️  Supabase logging failed (RC=$SUPABASE_RC): $SUPABASE_RESP"
-                echo "::warning::Supabase logging failed for $FNAME - check credentials and connectivity"
+                echo "  ⚠️  Supabase logging failed (non-critical)"
               fi
             fi
 
@@ -961,24 +874,22 @@ jobs:
       # ── Upload raw recordings as fallback artifact ──────────────────────
       # Only non-empty if some uploads failed; gives the commit job something
       # to retry on the next run.
-      # FIX: Use sanitized artifact name
       - name: Upload failed recordings artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: raw-videos-${{ steps.sanitize.outputs.artifact-id }}
+          name: raw-videos-${{ matrix.channel.username }}-${{ matrix.channel.site }}
           path: videos/mp4/
           retention-days: 1
           if-no-files-found: ignore
           compression-level: 1
 
       # ── DB artifact for commit job ──────────────────────────────────────
-      # FIX: Use sanitized artifact name
       - name: Upload database artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: db-${{ steps.sanitize.outputs.artifact-id }}
+          name: db-${{ matrix.channel.username }}-${{ matrix.channel.site }}
           path: database/
           retention-days: 7
           if-no-files-found: ignore
@@ -1046,7 +957,7 @@ jobs:
 
               if [[ -f "$DEST" ]]; then
                 # Merge: combine recordings arrays, deduplicate by .id
-                # FIX: Acquire lock BEFORE checking file existence to prevent race
+                # Use file locking to prevent race conditions
                 LOCK_FILE="$DEST.lock"
                 
                 echo "  Merging with existing file..."
@@ -1059,23 +970,17 @@ jobs:
                     exit 0
                   fi
                   
-                  # Re-check file existence after acquiring lock
-                  if [[ ! -f "$DEST" ]]; then
-                    echo "  File disappeared, creating new..."
-                    cp "$REC_FILE" "$DEST"
-                  else
-                    # Merge while lock is held
-                    jq -s '
-                      .[0] as $a | .[1] as $b |
-                      $a | .recordings = ([$a.recordings[], $b.recordings[]] | unique_by(.id)) |
-                      .summary.total_recordings = (.recordings|length) |
-                      .summary.total_size_bytes  = ([.recordings[].filesize_bytes]|add//0)
-                    ' "$DEST" "$REC_FILE" > "$DEST.tmp"
-                    
-                    # Atomic move while lock is still held
-                    mv "$DEST.tmp" "$DEST"
-                    echo "  ✓ Merged"
-                  fi
+                  # Merge while lock is held
+                  jq -s '
+                    .[0] as $a | .[1] as $b |
+                    $a | .recordings = ([$a.recordings[], $b.recordings[]] | unique_by(.id)) |
+                    .summary.total_recordings = (.recordings|length) |
+                    .summary.total_size_bytes  = ([.recordings[].filesize_bytes]|add//0)
+                  ' "$DEST" "$REC_FILE" > "$DEST.tmp"
+                  
+                  # Atomic move while lock is still held
+                  mv "$DEST.tmp" "$DEST"
+                  echo "  ✓ Merged"
                   
                   # Lock automatically released when FD 200 closes
                 } 200>"$LOCK_FILE"
@@ -1112,10 +1017,9 @@ jobs:
             echo "::group::Committing changes"
             git status --short
             
-            # FIX: Improved retry loop for git push with better conflict resolution
+            # Retry loop for git push with conflict resolution
             MAX_RETRIES=5
             SUCCESS=false
-            COMMIT_CREATED=false
             
             for RETRY in $(seq 1 $MAX_RETRIES); do
               if [[ "$RETRY" -gt 1 ]]; then
@@ -1123,50 +1027,38 @@ jobs:
                 sleep $(( RETRY * 5 ))
               fi
               
-              # Create commit only once
-              if [[ "$COMMIT_CREATED" == "false" ]]; then
-                if git commit -m "chore: update recording database [skip ci]"; then
-                  COMMIT_CREATED=true
-                  echo "  ✓ Commit created"
-                else
+              # Check if we already have a commit
+              if git log -1 --pretty=%B 2>/dev/null | grep -q "update recording database"; then
+                echo "  Using existing commit"
+              else
+                # Create commit
+                if ! git commit -m "chore: update recording database [skip ci]"; then
                   echo "  ⚠️  Commit failed, nothing to commit?"
                   break
                 fi
               fi
               
-              # Fetch latest changes
-              if ! timeout 30 git fetch origin "${{ github.ref_name || 'main' }}" 2>/dev/null; then
-                echo "  ⚠️  Fetch failed, will retry..."
-                continue
-              fi
-              
-              # Try to rebase our commit on top of remote
-              if timeout 60 git rebase "origin/${{ github.ref_name || 'main' }}"; then
+              # Pull with timeout and rebase
+              if timeout 60 git pull --rebase origin "${{ github.ref_name || 'main' }}"; then
                 # Push with timeout
-                if timeout 60 git push origin "HEAD:${{ github.ref_name || 'main' }}"; then
+                if timeout 60 git push origin "${{ github.ref_name || 'main' }}"; then
                   echo "✓ Database committed to GitHub"
                   SUCCESS=true
                   break
                 else
                   echo "  ⚠️  Push failed, will retry..."
-                  # Abort any partial push state
-                  git rebase --abort 2>/dev/null || true
                 fi
               else
-                echo "  ⚠️  Rebase failed, resolving..."
+                echo "  ⚠️  Pull/rebase failed, resolving..."
                 # Abort failed rebase
                 git rebase --abort 2>/dev/null || true
-                
-                # FIX: Use merge strategy instead of rebase for next attempt
-                if timeout 60 git pull --no-rebase origin "${{ github.ref_name || 'main' }}"; then
-                  # Try push again after merge
-                  if timeout 60 git push origin "HEAD:${{ github.ref_name || 'main' }}"; then
-                    echo "✓ Database committed to GitHub (via merge)"
-                    SUCCESS=true
-                    break
-                  fi
-                fi
               fi
+              
+              # Reset for next attempt
+              git reset --soft HEAD~1 2>/dev/null || true
+              
+              # Fetch latest changes
+              timeout 30 git fetch origin "${{ github.ref_name || 'main' }}" 2>/dev/null || true
             done
             
             if [[ "$SUCCESS" == "false" ]]; then
@@ -1252,27 +1144,17 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           retries: 3
           script: |
-            // FIX: Improved branch resolution using GITHUB_REF environment variable
-            let branch = process.env.GITHUB_REF_NAME || 'main';
-            
-            // Fallback: parse from context.ref
-            if (!branch || branch === 'main') {
-              if (context.ref?.startsWith('refs/heads/')) {
-                branch = context.ref.replace('refs/heads/', '');
-              } else {
-                // Last resort: query repo default branch
-                try {
-                  const repo = await github.rest.repos.get({
-                    owner: context.repo.owner, 
-                    repo: context.repo.repo
-                  });
-                  branch = repo.data.default_branch;
-                  console.log(`Using repo default branch: ${branch}`);
-                } catch (err) {
-                  console.log(`Could not fetch default branch: ${err.message}`);
-                  // Keep 'main' as final fallback
-                }
-              }
+            // Resolve the branch we are currently running on
+            let branch = 'main';
+            if (context.ref?.startsWith('refs/heads/')) {
+              branch = context.ref.replace('refs/heads/', '');
+            } else {
+              try {
+                const repo = await github.rest.repos.get({
+                  owner: context.repo.owner, repo: context.repo.repo
+                });
+                branch = repo.data.default_branch;
+              } catch { /* keep 'main' */ }
             }
 
             console.log(`↻ Restarting on branch: ${branch}`);
