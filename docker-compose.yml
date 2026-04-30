@@ -13,6 +13,10 @@ services:
       - HEADLESS=true
       - BROWSER_TIMEOUT=240000
       - TEST_URL=https://www.google.com
+      # Add proxy support - set via environment variable
+      - PROXY_URL=${PROXY_URL:-}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
     ports:
       - "8191:8191"
     restart: unless-stopped
@@ -37,6 +41,9 @@ services:
       - HEADLESS=true
       - BROWSER_TIMEOUT=240000
       - TEST_URL=https://www.google.com
+      - PROXY_URL=${PROXY_URL:-}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
     ports:
       - "8192:8191"
     restart: unless-stopped
@@ -61,6 +68,9 @@ services:
       - HEADLESS=true
       - BROWSER_TIMEOUT=240000
       - TEST_URL=https://www.google.com
+      - PROXY_URL=${PROXY_URL:-}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
     ports:
       - "8193:8191"
     restart: unless-stopped
@@ -85,6 +95,9 @@ services:
       - HEADLESS=true
       - BROWSER_TIMEOUT=240000
       - TEST_URL=https://www.google.com
+      - PROXY_URL=${PROXY_URL:-}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
     ports:
       - "8194:8191"
     restart: unless-stopped
@@ -109,6 +122,9 @@ services:
       - HEADLESS=true
       - BROWSER_TIMEOUT=240000
       - TEST_URL=https://www.google.com
+      - PROXY_URL=${PROXY_URL:-}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
     ports:
       - "8195:8191"
     restart: unless-stopped
