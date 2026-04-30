@@ -189,7 +189,7 @@ func (u *TurboViPlayUploader) uploadFile(filePath string) (string, error) {
 		return "", fmt.Errorf("no slug in response")
 	}
 
-	// TurboViPlay video URL format: https://turboviplay.com/embed-{slug}.html
-	viewURL := fmt.Sprintf("https://turboviplay.com/embed-%s.html", slug)
+	// TurboViPlay video URL format: https://emturbovid.com/t/{slug}
+	viewURL := fmt.Sprintf("https://emturbovid.com/t/%s", slug)
 	return viewURL, nil
 }
