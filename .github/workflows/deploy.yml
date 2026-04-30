@@ -19,6 +19,7 @@ jobs:
   deploy:
     name: Deploy to AWS EC2
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Add timeout to prevent hanging builds
     
     steps:
       - name: Checkout code
@@ -66,7 +67,7 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2-key.pem
           chmod 600 ~/.ssh/ec2-key.pem
           
-          # Create SSH config
+          # Create SSH config with keepalive settings
           cat > ~/.ssh/config <<EOF
           Host ec2-deploy
             HostName ${{ secrets.EC2_HOST }}
@@ -75,6 +76,9 @@ jobs:
             StrictHostKeyChecking no
             UserKnownHostsFile /dev/null
             LogLevel ERROR
+            ServerAliveInterval 60
+            ServerAliveCountMax 10
+            TCPKeepAlive yes
           EOF
           chmod 600 ~/.ssh/config
           
@@ -99,7 +103,7 @@ jobs:
         run: |
           echo "🚀 Starting deployment..."
           
-          ssh ec2-deploy bash << 'ENDSSH'
+          ssh -o ServerAliveInterval=60 -o ServerAliveCountMax=10 ec2-deploy bash << 'ENDSSH'
             set -e
             
             echo "📍 Current directory: $(pwd)"
@@ -121,9 +125,22 @@ jobs:
               echo "⏩ Skipping rebuild, just restarting..."
               sudo docker compose restart
             else
-              echo "🏗️  Rebuilding containers..."
+              echo "🏗️  Rebuilding containers with improved caching..."
+              
+              # Stop containers but keep volumes
               sudo docker compose down
-              sudo docker compose up -d --build
+              
+              # Build with better error handling and retry
+              echo "Building Docker image (this may take a few minutes)..."
+              sudo DOCKER_BUILDKIT=1 docker compose build --no-cache recorder || {
+                echo "⚠️  First build attempt failed, retrying with fresh cache..."
+                sleep 5
+                sudo docker system prune -f
+                sudo DOCKER_BUILDKIT=1 docker compose build recorder
+              }
+              
+              # Start all services
+              sudo docker compose up -d
             fi
             
             echo ""
@@ -163,7 +180,7 @@ jobs:
             cd /home/ubuntu/goondvr
             
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "� Container Status:"
+            echo "🐳 Container Status:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             sudo docker compose ps
             
@@ -178,6 +195,20 @@ jobs:
             echo "🐳 Docker System Usage:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             sudo docker system df
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⚙️  GoFile Upload Status:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            if [ -f conf/settings.json ]; then
+              if grep -q '"enable_gofile_upload": true' conf/settings.json; then
+                echo "✅ GoFile upload is ENABLED"
+              else
+                echo "⚠️  GoFile upload is DISABLED"
+              fi
+            else
+              echo "⚠️  Settings file not found"
+            fi
             
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -209,4 +240,11 @@ jobs:
           echo "   • Add channels via web UI"
           echo "   • Monitor logs: docker compose logs -f"
           echo "   • Check disk usage: df -h"
+          echo "   • Verify GoFile upload in Settings"
           echo ""
+          echo "⚙️  Default Settings:"
+          echo "   • Max Duration: 45 minutes (auto-split)"
+          echo "   • GoFile Upload: Enabled"
+          echo "   • Multi-host: GoFile + TurboViPlay + VOE.sx + Streamtape"
+          echo ""
+
