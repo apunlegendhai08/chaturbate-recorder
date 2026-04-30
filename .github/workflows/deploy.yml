@@ -1,7 +1,16 @@
 name: Deploy to EC2
 
 on:
-  workflow_dispatch:  # Manual trigger only (requires secrets setup)
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: 'Skip Docker rebuild (faster)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   deploy:
@@ -12,83 +21,172 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Check secrets
+      - name: Validate secrets
         run: |
-          echo "Checking secrets configuration..."
+          echo "🔍 Validating GitHub secrets..."
           
+          # Check EC2_SSH_KEY
           if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
-            echo "❌ ERROR: EC2_SSH_KEY secret is not set!"
+            echo "❌ ERROR: EC2_SSH_KEY secret is missing!"
+            echo "Please add your EC2 private key to GitHub secrets"
             exit 1
-          else
-            echo "✅ EC2_SSH_KEY is set"
           fi
+          echo "✅ EC2_SSH_KEY is configured"
           
+          # Check EC2_HOST
           if [ -z "${{ secrets.EC2_HOST }}" ]; then
-            echo "❌ ERROR: EC2_HOST secret is not set!"
+            echo "❌ ERROR: EC2_HOST secret is missing!"
+            echo "Please add your EC2 IP address to GitHub secrets"
             exit 1
-          else
-            echo "✅ EC2_HOST is set: ${{ secrets.EC2_HOST }}"
+          fi
+          echo "✅ EC2_HOST is configured: ${{ secrets.EC2_HOST }}"
+          
+          # Validate IP format
+          if ! echo "${{ secrets.EC2_HOST }}" | grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' > /dev/null; then
+            echo "⚠️  WARNING: EC2_HOST doesn't look like an IP address"
+            echo "Current value: ${{ secrets.EC2_HOST }}"
+            echo "Expected format: 1.2.3.4"
           fi
           
           echo ""
-          echo "All secrets configured correctly!"
+          echo "✅ All secrets validated successfully!"
 
-      - name: Setup SSH
+      - name: Configure SSH
         run: |
+          echo "🔐 Setting up SSH configuration..."
+          
+          # Create SSH directory
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Write SSH key
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2-key.pem
           chmod 600 ~/.ssh/ec2-key.pem
           
-          # Disable strict host key checking for GitHub Actions
-          cat >> ~/.ssh/config <<EOF
-          Host ${{ secrets.EC2_HOST }}
+          # Create SSH config
+          cat > ~/.ssh/config <<EOF
+          Host ec2-deploy
+            HostName ${{ secrets.EC2_HOST }}
+            User ubuntu
+            IdentityFile ~/.ssh/ec2-key.pem
             StrictHostKeyChecking no
-            UserKnownHostsFile=/dev/null
+            UserKnownHostsFile /dev/null
+            LogLevel ERROR
           EOF
+          chmod 600 ~/.ssh/config
           
-          echo "SSH setup complete for ${{ secrets.EC2_HOST }}"
+          echo "✅ SSH configured for ${{ secrets.EC2_HOST }}"
 
-      - name: Deploy to EC2
+      - name: Test SSH connection
         run: |
-          ssh -i ~/.ssh/ec2-key.pem ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
-            cd /home/ubuntu/goondvr
+          echo "🔌 Testing SSH connection..."
+          
+          if ssh ec2-deploy "echo '✅ SSH connection successful!'" 2>&1; then
+            echo "Connection test passed!"
+          else
+            echo "❌ SSH connection failed!"
+            echo "Please check:"
+            echo "  1. EC2 instance is running"
+            echo "  2. Security group allows SSH from GitHub Actions IPs"
+            echo "  3. SSH key is correct"
+            exit 1
+          fi
+
+      - name: Deploy application
+        run: |
+          echo "🚀 Starting deployment..."
+          
+          ssh ec2-deploy bash << 'ENDSSH'
+            set -e
             
-            echo "📥 Pulling latest changes..."
+            echo "📍 Current directory: $(pwd)"
+            cd /home/ubuntu/goondvr || {
+              echo "❌ Directory /home/ubuntu/goondvr not found!"
+              exit 1
+            }
+            
+            echo ""
+            echo "📥 Pulling latest changes from GitHub..."
             git fetch origin
             git reset --hard origin/main
             git pull origin main
             
-            echo "🐳 Rebuilding containers..."
-            sudo docker compose down
-            sudo docker compose up -d --build
+            echo ""
+            echo "🐳 Managing Docker containers..."
             
-            echo "🧹 Cleaning build cache..."
+            if [ "${{ github.event.inputs.skip_build }}" = "true" ]; then
+              echo "⏩ Skipping rebuild, just restarting..."
+              sudo docker compose restart
+            else
+              echo "🏗️  Rebuilding containers..."
+              sudo docker compose down
+              sudo docker compose up -d --build
+            fi
+            
+            echo ""
+            echo "🧹 Cleaning Docker build cache..."
             sudo docker builder prune -af
             
+            echo ""
             echo "✅ Deployment complete!"
-            sudo docker compose ps
-          EOF
+          ENDSSH
 
       - name: Verify deployment
         run: |
-          echo "⏳ Waiting for services to be healthy..."
+          echo "⏳ Waiting for services to start..."
           sleep 30
           
-          ssh -i ~/.ssh/ec2-key.pem ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
+          echo ""
+          echo "📊 Checking deployment status..."
+          
+          ssh ec2-deploy bash << 'ENDSSH'
             cd /home/ubuntu/goondvr
             
-            echo "📊 Container Status:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "� Container Status:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             sudo docker compose ps
             
             echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "💾 Disk Usage:"
-            df -h /
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            df -h / | grep -E "Filesystem|/dev"
             
             echo ""
-            echo "🐳 Docker Usage:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🐳 Docker System Usage:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             sudo docker system df
-          EOF
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🌐 Application URL:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "${{ secrets.EC2_HOST }}")
+            echo "http://${PUBLIC_IP}:8080"
+          ENDSSH
 
-      - name: Cleanup SSH
+      - name: Cleanup
         if: always()
-        run: rm -f ~/.ssh/ec2-key.pem
+        run: |
+          echo "🧹 Cleaning up SSH keys..."
+          rm -f ~/.ssh/ec2-key.pem ~/.ssh/config
+          echo "✅ Cleanup complete"
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ DEPLOYMENT SUCCESSFUL!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "🌐 Access your application:"
+          echo "   http://${{ secrets.EC2_HOST }}:8080"
+          echo ""
+          echo "📊 Next steps:"
+          echo "   • Add channels via web UI"
+          echo "   • Monitor logs: docker compose logs -f"
+          echo "   • Check disk usage: df -h"
+          echo ""
