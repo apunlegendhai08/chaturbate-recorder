@@ -97,42 +97,27 @@ func FetchStream(ctx context.Context, client *internal.Req, username string) (*S
 		fmt.Printf("[DEBUG] [%s] Attempting FlareSolverr scraping (primary method)...\n", username)
 	}
 	
-	// Try scraping with FlareSolverr (up to 3 attempts)
+	// Try scraping with FlareSolverr (only 1 attempt with shorter timeout)
+	// If it fails, quickly fall back to POST API
 	var hlsURL, status string
 	var scrapeErr error
 	
-	for attempt := 1; attempt <= 3; attempt++ {
+	if server.Config.Debug {
+		fmt.Printf("[DEBUG] [%s] FlareSolverr attempt 1/1...\n", username)
+	}
+	
+	// Create a context with 60-second timeout for FlareSolverr (reduced from 180s)
+	attemptCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	hlsURL, status, scrapeErr = internal.ScrapeChaturbateStreamWithFlareSolverr(attemptCtx, username)
+	cancel()
+	
+	if scrapeErr == nil {
 		if server.Config.Debug {
-			fmt.Printf("[DEBUG] [%s] FlareSolverr attempt %d/3...\n", username, attempt)
+			fmt.Printf("[DEBUG] [%s] FlareSolverr success\n", username)
 		}
-		
-		// Create a context with longer timeout for FlareSolverr
-		attemptCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
-		hlsURL, status, scrapeErr = internal.ScrapeChaturbateStreamWithFlareSolverr(attemptCtx, username)
-		cancel()
-		
-		if scrapeErr == nil {
-			if server.Config.Debug {
-				fmt.Printf("[DEBUG] [%s] FlareSolverr success on attempt %d\n", username, attempt)
-			}
-			break
-		}
-		
+	} else {
 		if server.Config.Debug {
-			fmt.Printf("[DEBUG] [%s] FlareSolverr attempt %d failed: %v\n", username, attempt, scrapeErr)
-		}
-		
-		// Short delay before retry
-		if attempt < 3 {
-			delay := time.Duration(5+attempt*5) * time.Second
-			if server.Config.Debug {
-				fmt.Printf("[DEBUG] [%s] Waiting %v before retry...\n", username, delay)
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
+			fmt.Printf("[DEBUG] [%s] FlareSolverr failed: %v\n", username, scrapeErr)
 		}
 	}
 	
