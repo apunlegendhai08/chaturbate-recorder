@@ -204,6 +204,7 @@ jobs:
               --network recorder-network \
               -p 8080:8080 \
               -e FLARESOLVERR_URL="$BYPARR_URL" \
+              -e IMGBB_API_KEY="${{ secrets.IMGBB_API_KEY }}" \
               -v $(pwd)/videos:/usr/src/app/videos \
               -v $(pwd)/database:/usr/src/app/database \
               -v $(pwd)/conf:/usr/src/app/conf \
@@ -214,6 +215,7 @@ jobs:
               --name goondvr \
               --network recorder-network \
               -p 8080:8080 \
+              -e IMGBB_API_KEY="${{ secrets.IMGBB_API_KEY }}" \
               -v $(pwd)/videos:/usr/src/app/videos \
               -v $(pwd)/database:/usr/src/app/database \
               -v $(pwd)/conf:/usr/src/app/conf \
