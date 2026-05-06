@@ -13,34 +13,21 @@ import (
 "time"
 )
 
-// ThumbnailUploader handles uploading thumbnail images to ImgBB
+// ThumbnailUploader handles uploading thumbnail images to Pixhost.to
 type ThumbnailUploader struct {
-apiKey string
+apiKey string // Not used for Pixhost, kept for compatibility
 client *http.Client
 }
 
-// imgBBResponse is the JSON response from the ImgBB API
-type imgBBResponse struct {
-Data struct {
-ID         string `json:"id"`
-URL        string `json:"url"`
-DisplayURL string `json:"display_url"`
-Image      struct {
-URL string `json:"url"`
-} `json:"image"`
-Thumb struct {
-URL string `json:"url"`
-} `json:"thumb"`
-} `json:"data"`
-Success bool `json:"success"`
-Status  int  `json:"status"`
-Error   struct {
-Message string `json:"message"`
-} `json:"error"`
+// pixhostResponse is the JSON response from the Pixhost.to API
+type pixhostResponse struct {
+Name    string `json:"name"`
+ShowURL string `json:"show_url"`
+ThURL   string `json:"th_url"`
 }
 
-// NewThumbnailUploader creates a new ImgBB thumbnail uploader.
-// apiKey is the ImgBB API key from https://api.imgbb.com/
+// NewThumbnailUploader creates a new Pixhost.to thumbnail uploader.
+// apiKey parameter is ignored (Pixhost doesn't require API keys)
 func NewThumbnailUploader(apiKey string) *ThumbnailUploader {
 return &ThumbnailUploader{
 apiKey: apiKey,
@@ -50,13 +37,9 @@ Timeout: 2 * time.Minute,
 }
 }
 
-// Upload uploads a thumbnail image to ImgBB and returns the direct image URL.
+// Upload uploads a thumbnail image to Pixhost.to and returns the direct image URL.
 func (t *ThumbnailUploader) Upload(thumbnailPath string) (string, error) {
-if t.apiKey == "" {
-return "", fmt.Errorf("ImgBB API key not configured")
-}
-
-log.Printf("Uploading thumbnail to ImgBB: %s", thumbnailPath)
+log.Printf("Uploading thumbnail to Pixhost.to: %s", thumbnailPath)
 
 file, err := os.Open(thumbnailPath)
 if err != nil {
@@ -71,7 +54,8 @@ writer := multipart.NewWriter(pw)
 errCh := make(chan error, 1)
 go func() {
 defer pw.Close()
-part, err := writer.CreateFormFile("image", filepath.Base(thumbnailPath))
+// Pixhost expects field name "img"
+part, err := writer.CreateFormFile("img", filepath.Base(thumbnailPath))
 if err != nil {
 errCh <- fmt.Errorf("create form file: %w", err)
 writer.Close()
@@ -82,15 +66,33 @@ errCh <- fmt.Errorf("copy file: %w", err)
 writer.Close()
 return
 }
+
+// Set content_type: 0 for SFW, 1 for NSFW
+// Using 1 (NSFW) since this is for adult content
+if err := writer.WriteField("content_type", "1"); err != nil {
+errCh <- fmt.Errorf("write content_type field: %w", err)
+writer.Close()
+return
+}
+
+// Optional: set thumbnail size (150-500, default 200)
+if err := writer.WriteField("max_th_size", "420"); err != nil {
+errCh <- fmt.Errorf("write max_th_size field: %w", err)
+writer.Close()
+return
+}
+
 errCh <- writer.Close()
 }()
 
-uploadURL := fmt.Sprintf("https://api.imgbb.com/1/upload?key=%s", t.apiKey)
+// Pixhost API endpoint
+uploadURL := "https://api.pixhost.to/images"
 req, err := http.NewRequest("POST", uploadURL, pr)
 if err != nil {
 return "", fmt.Errorf("create request: %w", err)
 }
 req.Header.Set("Content-Type", writer.FormDataContentType())
+req.Header.Set("Accept", "application/json")
 
 resp, err := t.client.Do(req)
 if err != nil {
@@ -111,35 +113,20 @@ return "", fmt.Errorf("read response: %w", err)
 }
 
 if resp.StatusCode != http.StatusOK {
-return "", fmt.Errorf("ImgBB returned status %d: %s", resp.StatusCode, string(body))
+return "", fmt.Errorf("Pixhost returned status %d: %s", resp.StatusCode, string(body))
 }
 
-var result imgBBResponse
+var result pixhostResponse
 if err := json.Unmarshal(body, &result); err != nil {
 return "", fmt.Errorf("decode response: %w", err)
 }
 
-if !result.Success {
-msg := result.Error.Message
-if msg == "" {
-msg = fmt.Sprintf("status %d", result.Status)
-}
-return "", fmt.Errorf("ImgBB upload failed: %s", msg)
+// Get the direct image URL from show_url
+imageURL := strings.TrimSpace(result.ShowURL)
+if imageURL == "" {
+return "", fmt.Errorf("Pixhost returned no image URL")
 }
 
-// Prefer the direct image URL; fall back through the chain
-imageURL := result.Data.Image.URL
-if imageURL == "" {
-imageURL = result.Data.URL
-}
-if imageURL == "" {
-imageURL = result.Data.DisplayURL
-}
-imageURL = strings.TrimSpace(imageURL)
-if imageURL == "" {
-return "", fmt.Errorf("ImgBB returned no image URL")
-}
-
-log.Printf("Thumbnail uploaded to ImgBB: %s", imageURL)
+log.Printf("Thumbnail uploaded to Pixhost: %s", imageURL)
 return imageURL, nil
 }

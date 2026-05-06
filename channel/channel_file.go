@@ -470,31 +470,26 @@ func (ch *Channel) finalizeRecordingAsync(filename string, recordedDuration floa
 				}
 			}
 			
-			// Step 2.5: Generate and upload thumbnail to ImgBB
+			// Step 2.5: Generate and upload thumbnail to Pixhost.to
 			var thumbnailLink string
 			ch.Info("📸 generating thumbnail for `%s`...", filepath.Base(finalPath))
 			tempThumbPath, err := generateThumbnail(finalPath)
 			if err != nil {
 				ch.Error("❌ thumbnail generation failed: %s", err.Error())
 			} else {
-				// Upload thumbnail to ImgBB (free image hosting with API)
-				ch.Info("uploading thumbnail to ImgBB...")
-				if server.Config.ImgBBAPIKey == "" {
-					ch.Error("❌ ImgBB API key not configured, skipping thumbnail upload")
+				// Upload thumbnail to Pixhost.to (free NSFW-friendly image hosting)
+				ch.Info("uploading thumbnail to Pixhost.to...")
+				thumbnailUploader := uploader.NewThumbnailUploader(server.Config.ImgBBAPIKey)
+				uploadedURL, err := thumbnailUploader.Upload(tempThumbPath)
+				if err != nil {
+					ch.Error("❌ thumbnail upload to Pixhost failed: %s", err.Error())
+					// Clean up temp file
 					os.Remove(tempThumbPath)
 				} else {
-					thumbnailUploader := uploader.NewThumbnailUploader(server.Config.ImgBBAPIKey)
-					uploadedURL, err := thumbnailUploader.Upload(tempThumbPath)
-					if err != nil {
-						ch.Error("❌ thumbnail upload to ImgBB failed: %s", err.Error())
-						// Clean up temp file
-						os.Remove(tempThumbPath)
-					} else {
-						ch.Info("✓ thumbnail uploaded to ImgBB: %s", uploadedURL)
-						thumbnailLink = uploadedURL
-						// Clean up temp file after successful upload
-						os.Remove(tempThumbPath)
-					}
+					ch.Info("✓ thumbnail uploaded to Pixhost: %s", uploadedURL)
+					thumbnailLink = uploadedURL
+					// Clean up temp file after successful upload
+					os.Remove(tempThumbPath)
 				}
 			}
 			
@@ -772,8 +767,14 @@ func (ch *Channel) logUploadToDatabase(filePath, gofileLink, turboviplayLink, vo
 	currentDate := time.Now().UTC().Format("2006-01-02")
 	dbDir := filepath.Join("database", ch.Config.Username, currentDate)
 	
-	// Create directory atomically
+	// Create directory atomically - check for disk full
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "no space left on device") ||
+			strings.Contains(errStr, "disk full") ||
+			strings.Contains(errStr, "not enough space") {
+			return fmt.Errorf("disk full while creating database directory: %w", err)
+		}
 		return fmt.Errorf("create database directory: %w", err)
 	}
 	
@@ -853,6 +854,12 @@ func (ch *Channel) logUploadToDatabase(filePath, gofileLink, turboviplayLink, vo
 	
 	tempFile := recordsFile + ".tmp"
 	if err := os.WriteFile(tempFile, jsonData, 0644); err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "no space left on device") ||
+			strings.Contains(errStr, "disk full") ||
+			strings.Contains(errStr, "not enough space") {
+			return fmt.Errorf("disk full while writing database records: %w", err)
+		}
 		return fmt.Errorf("write temp records file: %w", err)
 	}
 	
@@ -916,12 +923,15 @@ func generateThumbnail(videoPath string) (string, error) {
 
 	// Verify thumbnail was created and has content
 	fileInfo, err := os.Stat(thumbnailPath)
-	if os.IsNotExist(err) {
-		return "", fmt.Errorf("thumbnail file was not created")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("thumbnail file was not created")
+		}
+		return "", fmt.Errorf("failed to stat thumbnail: %w", err)
 	}
 	if fileInfo.Size() < 1000 { // Less than 1KB is probably corrupted
 		os.Remove(thumbnailPath)
-		return "", fmt.Errorf("thumbnail file is too small (corrupted)")
+		return "", fmt.Errorf("thumbnail file is too small (%d bytes, expected >1KB)", fileInfo.Size())
 	}
 
 	return thumbnailPath, nil
@@ -1074,29 +1084,24 @@ func (ch *Channel) ProcessOrphanedFile(filePath string) {
 				}
 			}
 			
-			// Step 2.5: Generate and upload thumbnail to ImgBB
+			// Step 2.5: Generate and upload thumbnail to Pixhost.to
 			var thumbnailLink string
 			ch.Info("📸 generating thumbnail for orphaned file `%s`...", filepath.Base(finalPath))
 			tempThumbPath, err := generateThumbnail(finalPath)
 			if err != nil {
 				ch.Error("❌ thumbnail generation failed: %s", err.Error())
 			} else {
-				// Upload thumbnail to ImgBB
-				ch.Info("uploading thumbnail to ImgBB...")
-				if server.Config.ImgBBAPIKey == "" {
-					ch.Error("❌ ImgBB API key not configured, skipping thumbnail upload")
+				// Upload thumbnail to Pixhost.to
+				ch.Info("uploading thumbnail to Pixhost.to...")
+				thumbnailUploader := uploader.NewThumbnailUploader(server.Config.ImgBBAPIKey)
+				uploadedURL, err := thumbnailUploader.Upload(tempThumbPath)
+				if err != nil {
+					ch.Error("❌ thumbnail upload to Pixhost failed: %s", err.Error())
 					os.Remove(tempThumbPath)
 				} else {
-					thumbnailUploader := uploader.NewThumbnailUploader(server.Config.ImgBBAPIKey)
-					uploadedURL, err := thumbnailUploader.Upload(tempThumbPath)
-					if err != nil {
-						ch.Error("❌ thumbnail upload to ImgBB failed: %s", err.Error())
-						os.Remove(tempThumbPath)
-					} else {
-						ch.Info("✓ thumbnail uploaded to ImgBB: %s", uploadedURL)
-						thumbnailLink = uploadedURL
-						os.Remove(tempThumbPath)
-					}
+					ch.Info("✓ thumbnail uploaded to Pixhost: %s", uploadedURL)
+					thumbnailLink = uploadedURL
+					os.Remove(tempThumbPath)
 				}
 			}
 			

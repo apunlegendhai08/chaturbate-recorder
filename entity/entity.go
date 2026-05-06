@@ -144,7 +144,7 @@ type Config struct {
 	StreamtapeAPIKey    string // Streamtape.com API key
 	
 	// Thumbnail hosting
-	ImgBBAPIKey string // ImgBB API key for thumbnail uploads (https://api.imgbb.com/)
+	ImgBBAPIKey string // Not used anymore - Pixhost.to doesn't require API keys (kept for compatibility)
 
 	// Supabase settings
 	SupabaseURL    string // Supabase project URL

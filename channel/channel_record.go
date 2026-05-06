@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/HeapOfChaos/goondvr/chaturbate"
@@ -16,6 +17,20 @@ import (
 	"github.com/HeapOfChaos/goondvr/stripchat"
 	"github.com/avast/retry-go/v4"
 )
+
+// isDiskFullError checks if an error is related to disk being full
+func isDiskFullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// Check for common disk full error messages across platforms
+	return strings.Contains(errStr, "no space left on device") ||
+		strings.Contains(errStr, "disk full") ||
+		strings.Contains(errStr, "not enough space") ||
+		strings.Contains(errStr, "insufficient disk space") ||
+		strings.Contains(errStr, "enospc")
+}
 
 // resolveSite returns the site.Site implementation for the given site name.
 // An empty or unrecognised name defaults to Chaturbate.
@@ -286,11 +301,55 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 	}
 	ch.Info("stream type: %s, resolution %dp (target: %dp), framerate %dfps (target: %dfps)", streamType, playlist.Resolution, ch.Config.Resolution, playlist.Framerate, ch.Config.Framerate)
 
+	// Start a goroutine to monitor disk space during recording
+	diskCheckCtx, diskCheckCancel := context.WithCancel(ctx)
+	defer diskCheckCancel()
+	
+	diskCheckDone := make(chan struct{})
+	go func() {
+		defer close(diskCheckDone)
+		ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-diskCheckCtx.Done():
+				return
+			case <-ticker.C:
+				diskPercent := server.Manager.CheckDiskSpace()
+				if diskPercent > 0 {
+					critThresh := float64(server.Config.DiskCriticalPercent)
+					if critThresh <= 0 {
+						critThresh = 95
+					}
+					if diskPercent >= critThresh {
+						ch.Error("⚠️ DISK CRITICAL during recording (%.0f%% used) - pausing to prevent crash", diskPercent)
+						// Pause this channel gracefully
+						// Use goroutine to avoid blocking the disk monitor
+						go func() {
+							ch.Pause()
+							notifier.Notify(
+								fmt.Sprintf("disk_full_during_recording:%s", ch.Config.Username),
+								"🚨 Disk Critical - Recording Paused",
+								fmt.Sprintf("Channel %s paused during recording due to critical disk space (%.0f%% used). Free up space and resume manually.", ch.Config.Username, diskPercent),
+							)
+						}()
+						return
+					}
+				}
+			}
+		}
+	}()
+
 	// WatchSegments will block here while recording, and return when stream ends
 	// We mark that recording was successful by returning a special error
 	err = playlist.WatchSegments(ctx, func(b []byte, duration float64) error {
 		return ch.handleSegmentForMonitor(runID, b, duration)
 	})
+	
+	// Cancel disk monitor and wait for it to finish
+	diskCheckCancel()
+	<-diskCheckDone
 	
 	// If we successfully started recording and it ended, return a special error
 	// to signal that we should check again immediately
@@ -327,6 +386,22 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 		n, err := ch.File.Write(ch.mp4InitSegment)
 		if err != nil {
 			ch.fileMu.Unlock()
+			// Check if this is a disk full error
+			if isDiskFullError(err) {
+				ch.Error("⚠️ DISK FULL on init segment - pausing recording to prevent crash")
+				// Pause this channel to prevent further write attempts
+				// Use goroutine to avoid deadlock (Pause needs to acquire locks)
+				go func() {
+					ch.Pause()
+					// Notify about disk full issue (with cooldown to prevent spam)
+					notifier.Notify(
+						fmt.Sprintf("disk_full_emergency:%s", ch.Config.Username),
+						"🚨 Disk Full - Recording Paused",
+						fmt.Sprintf("Channel %s paused due to disk full. Free up space and resume manually.", ch.Config.Username),
+					)
+				}()
+				return retry.Unrecoverable(fmt.Errorf("disk full on init segment: %w", err))
+			}
 			return fmt.Errorf("write mp4 init segment: %w", err)
 		}
 		ch.Filesize += int64(n)
@@ -341,6 +416,22 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 	n, err := ch.File.Write(b)
 	if err != nil {
 		ch.fileMu.Unlock()
+		// Check if this is a disk full error
+		if isDiskFullError(err) {
+			ch.Error("⚠️ DISK FULL - pausing recording to prevent crash")
+			// Pause this channel to prevent further write attempts
+			// Use goroutine to avoid deadlock (Pause needs to acquire locks)
+			go func() {
+				ch.Pause()
+				// Notify about disk full issue (with cooldown to prevent spam)
+				notifier.Notify(
+					fmt.Sprintf("disk_full_emergency:%s", ch.Config.Username),
+					"🚨 Disk Full - Recording Paused",
+					fmt.Sprintf("Channel %s paused due to disk full. Free up space and resume manually.", ch.Config.Username),
+				)
+			}()
+			return retry.Unrecoverable(fmt.Errorf("disk full: %w", err))
+		}
 		return fmt.Errorf("write file: %w", err)
 	}
 
@@ -352,6 +443,20 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 	// on forced shutdown (e.g., GitHub Actions workflow cancellation)
 	if ch.segmentCount%10 == 0 {
 		if err := ch.File.Sync(); err != nil && !errors.Is(err, os.ErrClosed) {
+			// Check if sync failed due to disk full
+			if isDiskFullError(err) {
+				ch.fileMu.Unlock()
+				ch.Error("⚠️ DISK FULL on sync - pausing recording")
+				go func() {
+					ch.Pause()
+					notifier.Notify(
+						fmt.Sprintf("disk_full_sync:%s", ch.Config.Username),
+						"🚨 Disk Full - Recording Paused",
+						fmt.Sprintf("Channel %s paused: sync failed due to disk full.", ch.Config.Username),
+					)
+				}()
+				return retry.Unrecoverable(fmt.Errorf("disk full on sync: %w", err))
+			}
 			// Log but don't fail - sync is best-effort for crash protection
 			if server.Config.Debug {
 				ch.Error("periodic sync failed: %v", err)
@@ -365,6 +470,28 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 
 	var newFilename string
 	if shouldSwitch {
+		// Check disk space before creating new file
+		diskPercent := server.Manager.CheckDiskSpace()
+		if diskPercent > 0 {
+			critThresh := float64(server.Config.DiskCriticalPercent)
+			if critThresh <= 0 {
+				critThresh = 95
+			}
+			if diskPercent >= critThresh {
+				ch.fileMu.Unlock()
+				ch.Error("⚠️ DISK CRITICAL before file switch (%.0f%% used) - pausing", diskPercent)
+				go func() {
+					ch.Pause()
+					notifier.Notify(
+						fmt.Sprintf("disk_full_before_switch:%s", ch.Config.Username),
+						"🚨 Disk Critical - Recording Paused",
+						fmt.Sprintf("Channel %s paused before file switch due to critical disk space (%.0f%% used).", ch.Config.Username, diskPercent),
+					)
+				}()
+				return retry.Unrecoverable(fmt.Errorf("disk space critical before file switch: %w", internal.ErrDiskSpaceCritical))
+			}
+		}
+		
 		if err := ch.cleanupLocked(); err != nil {
 			ch.fileMu.Unlock()
 			return fmt.Errorf("next file: %w", err)
@@ -376,6 +503,19 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 		}
 		if err := ch.createNewFileLocked(filename, ch.FileExt); err != nil {
 			ch.fileMu.Unlock()
+			// Check if file creation failed due to disk full
+			if isDiskFullError(err) {
+				ch.Error("⚠️ DISK FULL on file creation - pausing recording")
+				go func() {
+					ch.Pause()
+					notifier.Notify(
+						fmt.Sprintf("disk_full_file_creation:%s", ch.Config.Username),
+						"🚨 Disk Full - Recording Paused",
+						fmt.Sprintf("Channel %s paused: cannot create new file due to disk full.", ch.Config.Username),
+					)
+				}()
+				return retry.Unrecoverable(fmt.Errorf("disk full on file creation: %w", err))
+			}
 			return fmt.Errorf("next file: %w", err)
 		}
 		ch.Sequence++

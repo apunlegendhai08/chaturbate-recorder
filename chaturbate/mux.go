@@ -444,7 +444,11 @@ func BuildSeekIndex(path string) error {
 			cur := binary.BigEndian.Uint64(buf[:])
 			if cur >= minT {
 				binary.BigEndian.PutUint64(buf[:], cur-minT)
-				f.WriteAt(buf[:], p.fileOffset)
+				if _, err := f.WriteAt(buf[:], p.fileOffset); err != nil {
+					// WriteAt failed - could be disk full or file corruption
+					// Log but continue with other patches
+					continue
+				}
 			}
 		} else {
 			var buf [4]byte
@@ -454,7 +458,11 @@ func BuildSeekIndex(path string) error {
 			cur := uint64(binary.BigEndian.Uint32(buf[:]))
 			if cur >= minT {
 				binary.BigEndian.PutUint32(buf[:], uint32(cur-minT))
-				f.WriteAt(buf[:], p.fileOffset)
+				if _, err := f.WriteAt(buf[:], p.fileOffset); err != nil {
+					// WriteAt failed - could be disk full or file corruption
+					// Log but continue with other patches
+					continue
+				}
 			}
 		}
 	}

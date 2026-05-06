@@ -328,10 +328,10 @@ func (c *Client) GetUploadsByStreamer(streamerName string) ([]UploadRecord, erro
 	return records, nil
 }
 
-// UploadThumbnail is deprecated - thumbnails are now uploaded to ImgBB instead of Supabase Storage
+// UploadThumbnail is deprecated - thumbnails are now uploaded to Pixhost.to instead of Supabase Storage
 // This function is kept for backward compatibility but should not be used
 func (c *Client) UploadThumbnail(bucket, objectPath, localPath, contentType string) (string, error) {
-	return "", fmt.Errorf("UploadThumbnail is deprecated - use uploader.ThumbnailUploader (ImgBB) instead")
+	return "", fmt.Errorf("UploadThumbnail is deprecated - use uploader.ThumbnailUploader (Pixhost.to) instead")
 }
 
 // ChannelConfig represents a channel configuration stored in Supabase

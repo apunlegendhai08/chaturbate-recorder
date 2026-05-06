@@ -101,7 +101,8 @@ jobs:
           sudo dpkg -i cloudflared.deb
 
           cloudflared tunnel --url http://localhost:8080 > tunnel.log 2>&1 &
-          echo $! > tunnel.pid
+          TUNNEL_PID=$!
+          echo $TUNNEL_PID > tunnel.pid
 
           # Wait up to 60s for tunnel URL to appear
           echo "Waiting for tunnel URL..."
@@ -113,20 +114,28 @@ jobs:
           done
 
           if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ Tunnel failed to establish. Full log:"; cat tunnel.log; exit 1
+            echo "❌ Tunnel failed to establish. Full log:"; cat tunnel.log
+            # Kill tunnel process if it's still running
+            kill $TUNNEL_PID 2>/dev/null || true
+            exit 1
           fi
 
           # Verify tunnel actually proxies to the app
           echo "Verifying tunnel is reachable..."
+          TUNNEL_REACHABLE=false
           for i in $(seq 1 6); do
             if curl -sf --max-time 10 "$TUNNEL_URL" > /dev/null 2>&1; then
-              echo "✅ Tunnel verified reachable"; break
-            fi
-            if [ "$i" -eq 6 ]; then
-              echo "⚠️  Tunnel URL exists but may not be reachable yet (Cloudflare propagation lag)"
+              echo "✅ Tunnel verified reachable"
+              TUNNEL_REACHABLE=true
+              break
             fi
             sleep 5
           done
+
+          if [ "$TUNNEL_REACHABLE" = false ]; then
+            echo "⚠️  Tunnel URL exists but is not reachable (Cloudflare propagation lag)"
+            echo "⚠️  Continuing anyway - tunnel may become reachable shortly"
+          fi
 
           echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
 
@@ -139,12 +148,30 @@ jobs:
           echo ""
 
           # Save tunnel URL to Supabase so it's always retrievable
-          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/tunnel_sessions" \
-            -H "apikey: ${{ secrets.SUPABASE_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
-            -d "{\"run_id\": ${{ github.run_number }}, \"url\": \"$TUNNEL_URL\", \"started_at\": \"$(date -u +%FT%TZ)\"}" \
-            || echo "⚠️  Could not save URL to Supabase (table may not exist)"
+          # Use proper error handling and retry logic
+          SAVE_SUCCESS=false
+          for attempt in 1 2 3; do
+            HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/supabase_response.txt \
+              -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/tunnel_sessions" \
+              -H "apikey: ${{ secrets.SUPABASE_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=minimal" \
+              -d "{\"run_id\": ${{ github.run_number }}, \"url\": \"$TUNNEL_URL\", \"started_at\": \"$(date -u +%FT%TZ)\"}")
+            
+            if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Tunnel URL saved to Supabase"
+              SAVE_SUCCESS=true
+              break
+            else
+              echo "⚠️  Attempt $attempt: Failed to save URL to Supabase (HTTP $HTTP_CODE)"
+              cat /tmp/supabase_response.txt
+              [ $attempt -lt 3 ] && sleep 2
+            fi
+          done
+          
+          if [ "$SAVE_SUCCESS" = false ]; then
+            echo "⚠️  Could not save URL to Supabase after 3 attempts (table may not exist or permissions issue)"
+          fi
 
       - name: Record for 5 hours
         run: |
@@ -175,8 +202,30 @@ jobs:
           LAST_HEARTBEAT=0
 
           while [ $(date +%s) -lt $END_TIME ] && [ "$CANCELLED" = false ]; do
-            if ! docker ps | grep -q goondvr; then
-              echo "⚠️  Container stopped!"; docker logs --tail 50 goondvr; break
+            # Check if container is still running
+            if ! docker ps --format '{{.Names}}' | grep -q '^goondvr$'; then
+              echo "⚠️  Container stopped unexpectedly!"
+              docker logs --tail 100 goondvr
+              echo "⚠️  Attempting to restart container..."
+              
+              # Try to restart the container
+              docker start goondvr 2>/dev/null || {
+                echo "❌ Failed to restart container, exiting"
+                break
+              }
+              
+              # Wait for app to be ready
+              for i in $(seq 1 30); do
+                if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+                  echo "✅ Container restarted successfully"
+                  break
+                fi
+                if [ "$i" -eq 30 ]; then
+                  echo "❌ Container failed to restart properly"
+                  break
+                fi
+                sleep 2
+              done
             fi
 
             CURRENT_TIME=$(date +%s)
@@ -192,8 +241,10 @@ jobs:
             if [ $((CURRENT_TIME - LAST_CLEANUP)) -gt 1800 ]; then
               COMPLETED_COUNT=$(docker exec goondvr find /usr/src/app/videos/completed \
                 -type f \( -name "*.mp4" -o -name "*.mkv" \) 2>/dev/null | wc -l || echo "0")
-              [ "$COMPLETED_COUNT" -gt 0 ] && \
+              if [ "$COMPLETED_COUNT" -gt 0 ]; then
+                echo "📤 Uploading $COMPLETED_COUNT completed file(s)..."
                 curl -s -X POST -m 120 http://localhost:8080/api/upload/completed > /dev/null 2>&1 &
+              fi
               LAST_CLEANUP=$CURRENT_TIME
             fi
 
@@ -212,11 +263,16 @@ jobs:
           done
 
           # Final upload
+          echo "📤 Performing final upload..."
           COMPLETED_COUNT=$(docker exec goondvr find /usr/src/app/videos/completed \
             -type f \( -name "*.mp4" -o -name "*.mkv" \) 2>/dev/null | wc -l || echo "0")
-          [ "$COMPLETED_COUNT" -gt 0 ] && \
+          if [ "$COMPLETED_COUNT" -gt 0 ]; then
+            echo "📤 Uploading $COMPLETED_COUNT final file(s)..."
             curl -s -X POST -m 300 http://localhost:8080/api/upload/completed || true
-          sleep 60
+            sleep 60
+          else
+            echo "✅ No files to upload"
+          fi
 
       - name: Trigger next run
         if: always()

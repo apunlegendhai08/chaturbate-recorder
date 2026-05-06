@@ -22,7 +22,7 @@ func SetupRouter() *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(requestLogger())
 
-	if err := LoadHTMLFromEmbedFS(r, view.FS, "templates/index.html", "templates/channel_info.html"); err != nil {
+	if err := LoadHTMLFromEmbedFS(r, view.FS, "templates/index.html", "templates/channel_info.html", "templates/videos.html"); err != nil {
 		log.Fatalf("failed to load HTML templates: %v", err)
 	}
 
@@ -94,6 +94,7 @@ func SetupStatic(r *gin.Engine) {
 // setupViews registers HTML templates and view handlers.
 func SetupViews(r *gin.Engine) {
 	r.GET("/", Index)
+	r.GET("/videos", VideosView)
 	r.GET("/updates", Updates)
 	r.GET("/thumb/:channelID", ThumbProxy)
 	r.GET("/live-thumb/:channelID", LiveThumbProxy)

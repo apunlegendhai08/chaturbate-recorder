@@ -1,5 +1,6 @@
-package main
+//go:build ignore
 
+package main
 import (
 	"encoding/json"
 	"fmt"
@@ -95,7 +96,7 @@ func main() {
 	log.Printf("  • TurboViPlay API Key: %s", maskKey(appSettings.TurboViPlayAPIKey))
 	log.Printf("  • VOE.sx API Key: %s", maskKey(appSettings.VoeSXAPIKey))
 	log.Printf("  • Streamtape Login: %s", maskKey(appSettings.StreamtapeLogin))
-	log.Printf("  • ImgBB API Key: %s", maskKey(appSettings.ImgBBAPIKey))
+	log.Printf("  • Pixhost API Key: %s (not required)", "N/A")
 	log.Printf("  • Discord Webhook: %s", maskURL(appSettings.DiscordWebhookURL))
 	log.Println()
 	log.Println("GitHub Actions will now fetch settings from Supabase on deployment!")

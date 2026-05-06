@@ -136,13 +136,17 @@ func (ch *Channel) Error(format string, a ...any) {
 // ExportInfo exports the channel information as a ChannelInfo struct.
 func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	var filename string
+	var duration float64
+	var filesize int64
+	var totalDiskUsageBytes int64
+	
 	ch.fileMu.RLock()
 	if ch.File != nil {
 		filename = ch.File.Name()
 	}
-	duration := ch.Duration
-	filesize := ch.Filesize
-	totalDiskUsageBytes := ch.TotalDiskUsageBytes
+	duration = ch.Duration
+	filesize = ch.Filesize
+	totalDiskUsageBytes = ch.TotalDiskUsageBytes
 	ch.fileMu.RUnlock()
 	var streamedAt string
 	if ch.StreamedAt != 0 {
@@ -226,6 +230,16 @@ func (ch *Channel) Stop() {
 // to maintain a steady flow without overwhelming the FlareSolverr queue.
 func (ch *Channel) Resume(startSeq int) {
 	go func() {
+		// Add panic recovery to prevent crashes from bringing down the entire application
+		defer func() {
+			if r := recover(); r != nil {
+				ch.Error("⚠️ PANIC RECOVERED in Monitor: %v", r)
+				log.Printf("ERROR [%s] PANIC RECOVERED: %v", ch.Config.Username, r)
+				// Pause the channel to prevent repeated panics
+				ch.Pause()
+			}
+		}()
+		
 		// 5-second stagger to avoid triggering Cloudflare bot detection
 		// 29 channels × 5 seconds = 2.5 minutes total startup time
 		// This spreads out requests to appear more natural to Cloudflare
@@ -266,6 +280,8 @@ func (ch *Channel) requestMonitorStart() (uint64, bool) {
 	defer ch.monitorMu.Unlock()
 
 	if ch.monitorRunning {
+		// Only set restart flag if channel is currently paused
+		// This prevents race where Resume() is called while monitor is already running
 		if ch.Config.IsPaused {
 			ch.monitorRestartRequested = true
 		}

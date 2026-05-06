@@ -177,14 +177,25 @@ func (u *GoFileUploader) uploadFile(server, filePath string) (string, error) {
 	resp, err := u.client.Do(req)
 	if err != nil {
 		pipeReader.CloseWithError(err) // unblock the writer goroutine
-		<-errChan                      // drain to avoid goroutine leak
+		// Drain error channel to avoid goroutine leak
+		select {
+		case <-errChan:
+		case <-time.After(5 * time.Second):
+			// Timeout waiting for goroutine - it may be stuck
+		}
 		return "", fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Check for errors from the goroutine
-	if err := <-errChan; err != nil {
-		return "", err
+	select {
+	case err := <-errChan:
+		if err != nil {
+			return "", err
+		}
+	case <-time.After(30 * time.Second):
+		// Goroutine took too long - this shouldn't happen but prevents deadlock
+		return "", fmt.Errorf("timeout waiting for file copy to complete")
 	}
 
 	if resp.StatusCode != http.StatusOK {

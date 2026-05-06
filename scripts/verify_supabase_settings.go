@@ -1,5 +1,6 @@
-package main
+//go:build ignore
 
+package main
 import (
 	"encoding/json"
 	"fmt"
@@ -56,7 +57,7 @@ func main() {
 	log.Printf("  • VOE.sx API Key: %s", maskKey(appSettings.VoeSXAPIKey))
 	log.Printf("  • Streamtape Login: %s", maskKey(appSettings.StreamtapeLogin))
 	log.Printf("  • Streamtape API Key: %s", maskKey(appSettings.StreamtapeAPIKey))
-	log.Printf("  • ImgBB API Key: %s", maskKey(appSettings.ImgBBAPIKey))
+	log.Printf("  • Pixhost API Key: %s (not required)", "N/A")
 	log.Println()
 	
 	log.Println("🎬 FFmpeg Settings:")

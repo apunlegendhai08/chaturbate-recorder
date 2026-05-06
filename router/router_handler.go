@@ -35,6 +35,14 @@ func Index(c *gin.Context) {
 	})
 }
 
+// VideosView renders the videos page.
+func VideosView(c *gin.Context) {
+	c.HTML(200, "videos.html", &IndexData{
+		Config:   server.Config,
+		Channels: server.Manager.ChannelInfo(),
+	})
+}
+
 // CreateChannelRequest represents the request body for creating a channel.
 type CreateChannelRequest struct {
 	Username    string `form:"username" binding:"required"`
@@ -773,40 +781,47 @@ func uploadCompletedFilesAsync() {
 		} else {
 			// Save to thumbnails directory
 			thumbnailDir := "thumbnails"
-			os.MkdirAll(thumbnailDir, 0755)
-			
-			// Extract username from filename
-			filename := filepath.Base(path)
-			username := strings.Split(filename, "_")[0]
-			thumbnailFilename := fmt.Sprintf("%s_%d.jpg", username, time.Now().Unix())
-			thumbnailPath := filepath.Join(thumbnailDir, thumbnailFilename)
-			
-			if err := os.Rename(tempThumbPath, thumbnailPath); err != nil {
-				// Try copy if rename fails
-				srcFile, _ := os.Open(tempThumbPath)
-				if srcFile != nil {
-					dstFile, _ := os.Create(thumbnailPath)
-					if dstFile != nil {
-						io.Copy(dstFile, srcFile)
-						dstFile.Close()
-					}
-					srcFile.Close()
-				}
-				os.Remove(tempThumbPath)
-			}
-			
-			// Upload thumbnail to Supabase if available
-			if supabaseClient != nil {
-				if link, err := supabaseClient.UploadThumbnail("thumbnails", filepath.Base(thumbnailPath), thumbnailPath, "image/jpeg"); err != nil {
-					log.Printf("⚠️  Thumbnail upload failed (keeping local): %v", err)
-					thumbnailLink = thumbnailPath
-				} else {
-					thumbnailLink = link
-					log.Printf("✓ Thumbnail uploaded: %s", thumbnailLink)
-				}
+			if err := os.MkdirAll(thumbnailDir, 0755); err != nil {
+				log.Printf("⚠️  Failed to create thumbnails directory: %v", err)
 			} else {
-				thumbnailLink = thumbnailPath
-				log.Printf("✓ Thumbnail saved locally: %s", thumbnailPath)
+				// Extract username from filename
+				filename := filepath.Base(path)
+				username := strings.Split(filename, "_")[0]
+				thumbnailFilename := fmt.Sprintf("%s_%d.jpg", username, time.Now().Unix())
+				thumbnailPath := filepath.Join(thumbnailDir, thumbnailFilename)
+				
+				if err := os.Rename(tempThumbPath, thumbnailPath); err != nil {
+					// Try copy if rename fails
+					srcFile, err := os.Open(tempThumbPath)
+					if err == nil {
+						dstFile, err := os.Create(thumbnailPath)
+						if err == nil {
+							_, copyErr := io.Copy(dstFile, srcFile)
+							dstFile.Close()
+							if copyErr != nil {
+								log.Printf("⚠️  Failed to copy thumbnail: %v", copyErr)
+							}
+						} else {
+							log.Printf("⚠️  Failed to create thumbnail file: %v", err)
+						}
+						srcFile.Close()
+					}
+					os.Remove(tempThumbPath)
+				}
+				
+				// Upload thumbnail to Supabase if available
+				if supabaseClient != nil {
+					if link, err := supabaseClient.UploadThumbnail("thumbnails", filepath.Base(thumbnailPath), thumbnailPath, "image/jpeg"); err != nil {
+						log.Printf("⚠️  Thumbnail upload failed (keeping local): %v", err)
+						thumbnailLink = thumbnailPath
+					} else {
+						thumbnailLink = link
+						log.Printf("✓ Thumbnail uploaded: %s", thumbnailLink)
+					}
+				} else {
+					thumbnailLink = thumbnailPath
+					log.Printf("✓ Thumbnail saved locally: %s", thumbnailPath)
+				}
 			}
 		}
 		log.Println("")

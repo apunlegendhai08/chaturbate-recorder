@@ -540,6 +540,13 @@ func saveChannelConfig(config []*entity.ChannelConfig) error {
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmpFile := path + ".tmp"
 	if err := os.WriteFile(tmpFile, data, perm); err != nil {
+		// Check if this is a disk full error
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "no space left on device") ||
+			strings.Contains(errStr, "disk full") ||
+			strings.Contains(errStr, "not enough space") {
+			return fmt.Errorf("disk full while writing config: %w", err)
+		}
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := os.Rename(tmpFile, path); err != nil {
@@ -856,6 +863,14 @@ func (m *Manager) ReportCFBlock(username string) {
 	defer m.cfBlocksMu.Unlock()
 	m.cfBlocks[username] = time.Now()
 
+	// Clean up old entries to prevent memory leak (keep last 24 hours only)
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for user, t := range m.cfBlocks {
+		if t.Before(cutoff) {
+			delete(m.cfBlocks, user)
+		}
+	}
+
 	window := time.Duration(server.Config.Interval)*time.Minute*2 + 30*time.Second
 	count := 0
 	for _, t := range m.cfBlocks {
@@ -907,11 +922,22 @@ func (m *Manager) GetStats() server.StatsResponse {
 }
 
 // CheckDiskSpace returns the current disk usage percentage for the recording directory.
-// Returns 0 if disk stats are not available (e.g., on Windows).
+// Returns 0 if disk stats are not available (e.g., on Windows with errors).
 func (m *Manager) CheckDiskSpace() float64 {
 	recPath := recordingDir(server.Config.Pattern)
 	disk, err := getDiskStats(recPath)
 	if err != nil {
+		// Log error in debug mode but don't crash
+		if server.Config.Debug {
+			log.Printf("[DEBUG] CheckDiskSpace: failed to get stats for %s: %v", recPath, err)
+		}
+		return 0
+	}
+	// Sanity check: if total is 0, something is wrong
+	if disk.Total == 0 {
+		if server.Config.Debug {
+			log.Printf("[DEBUG] CheckDiskSpace: total disk space is 0 for %s", recPath)
+		}
 		return 0
 	}
 	return disk.Percent
@@ -919,9 +945,12 @@ func (m *Manager) CheckDiskSpace() float64 {
 
 // diskMonitor runs every 5 minutes and fires notifications when disk usage
 // crosses the configured warning or critical thresholds.
+// When disk reaches 98%+ (emergency level), it automatically pauses ALL recording channels.
 func (m *Manager) diskMonitor() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
+	emergencyPauseTriggered := false // Track if we've already paused all channels
+	
 	for range ticker.C {
 		recPath := recordingDir(server.Config.Pattern)
 		disk, err := getDiskStats(recPath)
@@ -944,6 +973,67 @@ func (m *Manager) diskMonitor() {
 		if warnThresh >= critThresh {
 			warnThresh = critThresh - 5
 		}
+		
+		// Emergency threshold: 98% or higher - pause ALL channels to prevent crash
+		emergencyThresh := 98.0
+		if pct >= emergencyThresh && !emergencyPauseTriggered {
+			log.Printf("[EMERGENCY] Disk usage at %.0f%% - pausing ALL recording channels to prevent system crash", pct)
+			emergencyPauseTriggered = true
+			
+			// Count active recordings
+			activeCount := 0
+			m.Channels.Range(func(_, v any) bool {
+				ch := v.(*channel.Channel)
+				if ch.IsOnline && !ch.Config.IsPaused {
+					activeCount++
+				}
+				return true
+			})
+			
+			// Pause all active channels with proper synchronization
+			pausedCount := 0
+			var pauseWg sync.WaitGroup
+			m.Channels.Range(func(_, v any) bool {
+				ch := v.(*channel.Channel)
+				if ch.IsOnline && !ch.Config.IsPaused {
+					pausedCount++
+					pauseWg.Add(1)
+					// Use goroutine to prevent potential deadlock
+					go func(channel *channel.Channel) {
+						defer pauseWg.Done()
+						channel.Pause()
+					}(ch)
+				}
+				return true
+			})
+			
+			// Wait for all pause operations to complete (with timeout)
+			pauseDone := make(chan struct{})
+			go func() {
+				pauseWg.Wait()
+				close(pauseDone)
+			}()
+			
+			select {
+			case <-pauseDone:
+				log.Printf("[EMERGENCY] Successfully paused %d channels", pausedCount)
+			case <-time.After(30 * time.Second):
+				log.Printf("[EMERGENCY] Timeout waiting for channels to pause (some may still be pausing)")
+			}
+			
+			usedGB := float64(disk.Used) / 1e9
+			totalGB := float64(disk.Total) / 1e9
+			notifier.Notify(
+				"disk_emergency_pause_all",
+				"🚨 EMERGENCY: All Recordings Paused",
+				fmt.Sprintf("Disk usage reached %.0f%% (%.1f/%.1f GB). Paused %d active recording(s) to prevent system crash. Free up space immediately and resume channels manually.", pct, usedGB, totalGB, pausedCount),
+			)
+		} else if pct < emergencyThresh && emergencyPauseTriggered {
+			// Reset emergency flag if disk space is freed
+			log.Printf("[RECOVERY] Disk usage dropped to %.0f%% - emergency pause flag reset", pct)
+			emergencyPauseTriggered = false
+		}
+		
 		usedGB := float64(disk.Used) / 1e9
 		totalGB := float64(disk.Total) / 1e9
 		msg := fmt.Sprintf("%.1f GB used of %.1f GB (%.0f%%)", usedGB, totalGB, pct)
@@ -1041,7 +1131,10 @@ func (m *Manager) ProcessOrphanedRecordings() {
 		
 		// Try to match filename against all channel usernames
 		m.Channels.Range(func(key, value interface{}) bool {
-			ch := value.(*channel.Channel)
+			ch, ok := value.(*channel.Channel)
+			if !ok || ch == nil || ch.Config == nil {
+				return true // Skip invalid entries
+			}
 			username := ch.Config.Username
 			// Check if filename starts with username followed by underscore and date pattern
 			if strings.HasPrefix(filename, username+"_") {
