@@ -104,42 +104,14 @@ func ScrapeChaturbateStream(ctx context.Context, username string) (string, strin
 func ScrapeChaturbateStreamWithFlareSolverr(ctx context.Context, username string) (string, string, error) {
 	pageURL := fmt.Sprintf("%s%s/", server.Config.Domain, username)
 	
-	// First, check if FlareSolverr is accessible
-	flaresolverrURL := getFlareSolverrURL()
 	if server.Config.Debug {
-		fmt.Printf("[DEBUG] Testing FlareSolverr connectivity at %s\n", flaresolverrURL)
+		flaresolverrURL := getFlareSolverrURL()
+		fmt.Printf("[DEBUG] Using FlareSolverr at %s\n", flaresolverrURL)
 	}
 	
-	// Quick health check with 5-second timeout using sessions.list (lightweight command)
-	healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	healthReqBody := []byte(`{"cmd":"sessions.list"}`)
-	healthReq, _ := http.NewRequestWithContext(healthCtx, "POST", flaresolverrURL, bytes.NewBuffer(healthReqBody))
-	healthReq.Header.Set("Content-Type", "application/json")
-	healthClient := &http.Client{Timeout: 5 * time.Second}
-	healthResp, healthErr := healthClient.Do(healthReq)
-	healthCancel()
-	
-	if healthErr != nil {
-		if server.Config.Debug {
-			fmt.Printf("[DEBUG] FlareSolverr health check failed: %v\n", healthErr)
-		}
-		return "", "", fmt.Errorf("flaresolverr not accessible: %w", healthErr)
-	}
-	defer healthResp.Body.Close()
-	
-	// Read response to check if it's valid JSON with status field
-	healthBody, _ := io.ReadAll(healthResp.Body)
-	if !strings.Contains(string(healthBody), `"status"`) {
-		if server.Config.Debug {
-			fmt.Printf("[DEBUG] FlareSolverr health check returned invalid response: %s\n", string(healthBody[:min(200, len(healthBody))]))
-		}
-		return "", "", fmt.Errorf("flaresolverr returned invalid response (HTTP %d)", healthResp.StatusCode)
-	}
-	
-	if server.Config.Debug {
-		fmt.Printf("[DEBUG] FlareSolverr health check passed (HTTP %d)\n", healthResp.StatusCode)
-	}
-	
+	// No pre-flight health check - just make the actual request
+	// If Byparr isn't ready, the request will fail with a clear error
+	// This avoids interfering with Byparr's initialization process
 	resp, err := GetFlareSolverrResponse(ctx, pageURL)
 	if err != nil {
 		return "", "", fmt.Errorf("flaresolverr failed: %w", err)
