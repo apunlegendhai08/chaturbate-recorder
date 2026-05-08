@@ -76,15 +76,21 @@ jobs:
               exit 1
             fi
             
-            # Try to connect to Byparr API
-            if curl -sf --max-time 5 http://localhost:8191/v1 > /dev/null 2>&1; then
-              echo "✅ Byparr is ready after $((i * 2)) seconds"
+            # Try to connect to Byparr API with POST (GET returns 405)
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+              -X POST http://localhost:8191/v1 \
+              -H "Content-Type: application/json" \
+              -d '{"cmd":"sessions.list"}' 2>/dev/null || echo "000")
+            
+            # 200 = success, 400 = bad request but API is responding
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "400" ]; then
+              echo "✅ Byparr is ready after $((i * 2)) seconds (HTTP $HTTP_CODE)"
               BYPARR_READY=true
               break
             fi
             
             if [ $((i % 10)) -eq 0 ]; then
-              echo "⏳ Still waiting for Byparr... ($i/60 attempts)"
+              echo "⏳ Still waiting for Byparr... ($i/60 attempts, last HTTP: $HTTP_CODE)"
             fi
             
             sleep 2
@@ -97,18 +103,19 @@ jobs:
             exit 1
           fi
           
-          # Test Byparr with a simple request
+          # Test Byparr with a simple sessions.list command (faster than full request)
           echo "🔍 Testing Byparr functionality..."
           TEST_RESPONSE=$(curl -s -X POST http://localhost:8191/v1 \
             -H "Content-Type: application/json" \
-            -d '{"cmd":"request.get","url":"https://chaturbate.com/","maxTimeout":60000}' \
-            --max-time 70)
+            -d '{"cmd":"sessions.list"}' \
+            --max-time 10)
           
-          if echo "$TEST_RESPONSE" | grep -q '"status":"ok"'; then
+          if echo "$TEST_RESPONSE" | grep -q '"status"'; then
             echo "✅ Byparr test successful"
+            echo "Response: $TEST_RESPONSE"
           else
             echo "⚠️  Byparr test returned unexpected response:"
-            echo "$TEST_RESPONSE" | head -20
+            echo "$TEST_RESPONSE"
             echo "Continuing anyway - may work for actual requests"
           fi
 

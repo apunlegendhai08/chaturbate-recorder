@@ -110,9 +110,11 @@ func ScrapeChaturbateStreamWithFlareSolverr(ctx context.Context, username string
 		fmt.Printf("[DEBUG] Testing FlareSolverr connectivity at %s\n", flaresolverrURL)
 	}
 	
-	// Quick health check with 5-second timeout
+	// Quick health check with 5-second timeout using sessions.list (lightweight command)
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	healthReq, _ := http.NewRequestWithContext(healthCtx, "GET", flaresolverrURL, nil)
+	healthReqBody := []byte(`{"cmd":"sessions.list"}`)
+	healthReq, _ := http.NewRequestWithContext(healthCtx, "POST", flaresolverrURL, bytes.NewBuffer(healthReqBody))
+	healthReq.Header.Set("Content-Type", "application/json")
 	healthClient := &http.Client{Timeout: 5 * time.Second}
 	healthResp, healthErr := healthClient.Do(healthReq)
 	healthCancel()
@@ -123,7 +125,16 @@ func ScrapeChaturbateStreamWithFlareSolverr(ctx context.Context, username string
 		}
 		return "", "", fmt.Errorf("flaresolverr not accessible: %w", healthErr)
 	}
-	healthResp.Body.Close()
+	defer healthResp.Body.Close()
+	
+	// Read response to check if it's valid JSON with status field
+	healthBody, _ := io.ReadAll(healthResp.Body)
+	if !strings.Contains(string(healthBody), `"status"`) {
+		if server.Config.Debug {
+			fmt.Printf("[DEBUG] FlareSolverr health check returned invalid response: %s\n", string(healthBody[:min(200, len(healthBody))]))
+		}
+		return "", "", fmt.Errorf("flaresolverr returned invalid response (HTTP %d)", healthResp.StatusCode)
+	}
 	
 	if server.Config.Debug {
 		fmt.Printf("[DEBUG] FlareSolverr health check passed (HTTP %d)\n", healthResp.StatusCode)
