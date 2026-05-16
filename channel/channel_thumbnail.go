@@ -34,7 +34,7 @@ func GenerateThumbnailForFile(videoPath string) {
 }
 
 // generateThumbnailForFile extracts a thumbnail and a sprite sheet of 10
-// evenly-spaced frames from the video. Both are uploaded to 0x0.st.
+// evenly-spaced frames from the video. Both are uploaded via Pixhost → Catbox → Freeimage.
 // URLs are saved as sidecars: video.mp4.thumb and video.mp4.sprite
 func generateThumbnailForFile(videoPath string, info, errFn func(string, ...interface{})) {
         ext := strings.ToLower(filepath.Ext(videoPath))
@@ -43,7 +43,7 @@ func generateThumbnailForFile(videoPath string, info, errFn func(string, ...inte
         }
 
         baseName := filepath.Base(videoPath)
-        host := uploader.NewFreeimageUploader()
+        imageHost := uploader.NewMultiImageUploader()
 
         // ── 1. Thumbnail frame at 5s ──────────────────────────────────────────────
         thumbPath := videoPath + ".thumb"
@@ -63,9 +63,9 @@ func generateThumbnailForFile(videoPath string, info, errFn func(string, ...inte
                 if err != nil {
                         info("thumb: frame extract failed for %s: %v", baseName, err)
                 } else if _, statErr := os.Stat(tmpJPG); statErr == nil {
-                        if url, e := host.Upload(tmpJPG); e == nil {
+                        if url, via, e := imageHost.Upload(tmpJPG); e == nil {
                                 os.WriteFile(thumbPath, []byte(url), 0644)
-                                info("thumb: uploaded thumbnail for %s", baseName)
+                                info("thumb: uploaded thumbnail for %s via %s", baseName, via)
                         } else {
                                 errFn("thumb: upload failed for %s: %v", baseName, e)
                         }
@@ -145,9 +145,9 @@ func generateThumbnailForFile(videoPath string, info, errFn func(string, ...inte
                                         info("thumb: ffmpeg output: %s", msg)
                                 }
                         } else if _, e := os.Stat(tmpSprite); e == nil {
-                                if url, ue := host.Upload(tmpSprite); ue == nil {
+                                if url, via, ue := imageHost.Upload(tmpSprite); ue == nil {
                                         os.WriteFile(spritePath, []byte(url), 0644)
-                                        info("thumb: uploaded sprite for %s", baseName)
+                                        info("thumb: uploaded sprite for %s via %s", baseName, via)
                                 } else {
                                         errFn("thumb: sprite upload failed for %s: %v", baseName, ue)
                                 }
