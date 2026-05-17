@@ -123,13 +123,21 @@ jobs:
           docker compose ps
 
           echo "Waiting for cookie-refresher (built-in) to push initial cookies..."
+          cookies_ok=false
           for attempt in {1..90}; do
             if docker compose logs chaturbate-dvr 2>/dev/null | grep -q 'refreshed and saved'; then
               echo "Initial Cloudflare cookies applied"
+              cookies_ok=true
               break
             fi
             sleep 5
           done
+
+          if [[ "$cookies_ok" != "true" ]]; then
+            echo "Cookie refresher did not push cookies in time"
+            docker compose logs --tail=80 chaturbate-dvr
+            exit 1
+          fi
 
       - name: Wait for web UI
         shell: bash
@@ -143,7 +151,7 @@ jobs:
               exit 0
             fi
 
-            if ! docker compose ps --status running --services | grep -qx "chaturbate-dvr"; then
+            if ! docker compose ps --services | grep -qx "chaturbate-dvr"; then
               echo "❌ chaturbate-dvr stopped before becoming ready"
               docker compose logs --tail=100 chaturbate-dvr
               exit 1
@@ -197,14 +205,20 @@ jobs:
           echo "TUNNEL_URL=$tunnel_url" >> "$GITHUB_ENV"
           echo "url=$tunnel_url" >> "$GITHUB_OUTPUT"
 
+          tunnel_reachable=false
           for attempt in {1..12}; do
             status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 15 "$tunnel_url" || true)"
             if [[ "$status" == "200" ]]; then
               echo "Tunnel is reachable: $tunnel_url"
+              tunnel_reachable=true
               break
             fi
             sleep 5
           done
+
+          if [[ "$tunnel_reachable" != "true" ]]; then
+            echo "Tunnel never became reachable"
+          fi
 
           curl -fsS -X POST "${SUPABASE_URL}/rest/v1/tunnel_sessions" \
             -H "apikey: ${SUPABASE_API_KEY}" \
@@ -246,13 +260,13 @@ jobs:
             docker compose cp chaturbate-dvr:/usr/src/app/videos/. emergency-backup/ 2>/dev/null || true
           }
 
-          trap stop_recorder SIGINT SIGTERM
+          trap stop_recorder INT TERM
 
           while (( $(date +%s) < finish_at )); do
-            if ! docker compose ps --status running --services | grep -qx "chaturbate-dvr"; then
+            if ! docker compose ps --services | grep -qx "chaturbate-dvr"; then
               echo "chaturbate-dvr is not running. Recent logs:"
               docker compose logs --tail=120 chaturbate-dvr || true
-              docker compose up -d chaturbate-dvr
+              docker compose up -d --build chaturbate-dvr
 
               for attempt in {1..30}; do
                 if curl -fsS --max-time 5 "$APP_URL" >/dev/null; then
