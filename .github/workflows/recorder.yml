@@ -86,7 +86,6 @@ jobs:
           fi
 
           echo "DURATION_HOURS=$duration" >> "$GITHUB_ENV"
-          echo "RUN_VALIDATED=true" >> "$GITHUB_ENV"
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
           echo "valid=true" >> "$GITHUB_OUTPUT"
 
@@ -96,7 +95,7 @@ jobs:
           set -euo pipefail
 
           echo "Starting Byparr..."
-          docker compose up -d byparr byparr-lb
+          docker compose up -d --scale byparr=2 byparr byparr-lb
 
           echo "Waiting for Byparr load balancer..."
           for attempt in {1..45}; do
