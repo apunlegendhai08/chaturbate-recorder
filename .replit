@@ -44,3 +44,8 @@ externalPort = 3000
 deploymentTarget = "vm"
 run = ["./chaturbate-dvr", "--port", "5000"]
 build = ["bash", "-c", "npm ci && npm run build:css && go build -o chaturbate-dvr ."]
+
+[userenv]
+
+[userenv.shared]
+SUPABASE_URL = "https://oennipbsnxlvcyvlufqk.supabase.co"
