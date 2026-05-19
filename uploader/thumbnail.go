@@ -9,6 +9,7 @@ import (
 "net/http"
 "os"
 "path/filepath"
+"regexp"
 "strings"
 "time"
 )
@@ -122,14 +123,17 @@ if err := json.Unmarshal(body, &result); err != nil {
 return "", fmt.Errorf("decode response: %w", err)
 }
 
-// Prefer direct image URL (img_url). For NSFW content img_url is always
-// empty and pixhost.to/images/... requires an age-gate cookie in the
-// browser, so use th_url (CDN thumbnail, no cookie needed) as the
-// primary fallback. Fall back to the derived /images/ URL only as a
-// last resort.
+// For NSFW uploads img_url is always empty. Derive the full-size CDN URL
+// from th_url by replacing the thumbnail path with the images path:
+//   https://t2.pixhost.to/thumbs/ID/file.jpg
+//   → https://img2.pixhost.to/images/ID/file.jpg
+// This gives the original full-resolution image without any age-gate.
+// th_url is only used as a last resort because it is capped at max_th_size.
 imageURL := strings.TrimSpace(result.ImgURL)
 if imageURL == "" {
-        imageURL = strings.TrimSpace(result.ThURL)
+        if th := strings.TrimSpace(result.ThURL); th != "" {
+                imageURL = pixhostThumbToFull(th)
+        }
 }
 if imageURL == "" && strings.Contains(result.ShowURL, "/show/") {
         imageURL = strings.Replace(result.ShowURL, "/show/", "/images/", 1)
@@ -142,4 +146,29 @@ log.Printf("Pixhost response: img_url=%q show_url=%q th_url=%q → using %q",
 
 log.Printf("Thumbnail uploaded to Pixhost: %s", imageURL)
 return imageURL, nil
+}
+
+// pixhostThToFull re-derives the full-resolution CDN URL from a Pixhost
+// thumbnail URL.
+//
+//      https://t2.pixhost.to/thumbs/8020/file.jpg
+//      → https://img2.pixhost.to/images/8020/file.jpg
+//
+// If the URL doesn't match the expected pattern, it is returned unchanged so
+// we always have something to store rather than an empty string.
+var pixhostThRe = regexp.MustCompile(`^https?://t(\d+)\.pixhost\.to/thumbs/`)
+
+func pixhostThumbToFull(thURL string) string {
+        loc := pixhostThRe.FindStringIndex(thURL)
+        if loc == nil {
+                return thURL
+        }
+        // Extract the server number from the match (group 1)
+        sub := pixhostThRe.FindStringSubmatch(thURL)
+        if len(sub) < 2 {
+                return thURL
+        }
+        n := sub[1]
+        full := "https://img" + n + ".pixhost.to/images/" + thURL[loc[1]:]
+        return full
 }
