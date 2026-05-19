@@ -16,15 +16,16 @@ import (
 )
 
 // getFlareSolverrURL returns the FlareSolverr/Byparr URL.
-// Priority: UI-configured value (server.Config.ByparrURL) > FLARESOLVERR_URL env var > localhost default.
+// Priority: FLARESOLVERR_URL env var > UI-configured value (server.Config.ByparrURL) > localhost default.
+// Env var is checked first so docker-compose can override a stale Supabase persisted setting.
 func getFlareSolverrURL() string {
-        if server.Config != nil && server.Config.ByparrURL != "" {
-                return server.Config.ByparrURL
-        }
-        if baseURL := os.Getenv("FLARESOLVERR_URL"); baseURL != "" {
-                return baseURL
-        }
-        return "http://localhost:8191/v1"
+	if baseURL := os.Getenv("FLARESOLVERR_URL"); baseURL != "" {
+		return baseURL
+	}
+	if server.Config != nil && server.Config.ByparrURL != "" {
+		return server.Config.ByparrURL
+	}
+	return "http://localhost:8191/v1"
 }
 
 type flareSolverrRequest struct {
