@@ -501,6 +501,24 @@
     </form>
 </dialog>
 
+<!-- ═══════════════════ DELETE CHANNEL DIALOG ═══════════════════ -->
+<dialog id="delete-channel-dialog" class="text-zinc-100 rounded-2xl w-full max-w-sm p-0 border-0 shadow-2xl" style="background:#12121a;border:1px solid rgba(255,255,255,0.08)">
+  <div class="p-6">
+    <h2 class="text-base font-bold mb-1.5">Delete channel?</h2>
+    <p class="text-sm text-zinc-500 mb-5">This will stop monitoring <span id="delete-channel-name" class="text-zinc-300 font-medium"></span> and remove it from the list. Recorded videos will not be deleted.</p>
+    <div class="flex justify-end gap-2">
+      <button type="button" onclick="document.getElementById('delete-channel-dialog').close()"
+              class="px-4 py-2 text-xs font-medium rounded-lg transition-all text-zinc-400 hover:text-zinc-200" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08)">
+        Cancel
+      </button>
+      <a id="delete-channel-confirm-link" href="#"
+         class="px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.25);color:#f87171;text-decoration:none">
+        Delete
+      </a>
+    </div>
+  </div>
+</dialog>
+
 <!-- ═══════════════════ ADD CHANNEL DIALOG ═══════════════════ -->
 <dialog id="create-dialog" class="text-zinc-100 rounded-2xl w-full max-w-[540px] max-h-[90vh] overflow-y-auto p-0 border-0 shadow-2xl" style="background:#12121a;border:1px solid rgba(255,255,255,0.08)">
     <form action="/create_channel" method="POST">
@@ -614,6 +632,15 @@
 function toggleDarkMode() {
     var isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('darkMode', isDark ? 'true' : 'false');
+}
+
+var _deleteChannelTarget = '';
+function openDeleteChannelDialog(username) {
+    _deleteChannelTarget = username;
+    document.getElementById('delete-channel-name').textContent = username;
+    var link = document.getElementById('delete-channel-confirm-link');
+    link.href = '/stop_channel/' + encodeURIComponent(username);
+    document.getElementById('delete-channel-dialog').showModal();
 }
 
 // ════════════════════════════════════════════════════
