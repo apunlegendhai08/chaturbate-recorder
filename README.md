@@ -180,7 +180,9 @@ flowchart LR
    ]
    ```
 
-4. **Run the workflow** — `Actions` tab → `24/7 Recorder` → `Run workflow` → choose duration (1–5 hours)
+4. **Set your INSTANCE_ID** — edit `.github/workflows/recorder.yml` and change `INSTANCE_ID: "a"` to a unique value per fork (e.g., `"b"`, `"c"`). This isolates each fork's channels while sharing the same Supabase database.
+
+5. **Run the workflow** — `Actions` tab → `24/7 Recorder` → `Run workflow` → choose duration (1–5 hours)
 
 5. **Get your dashboard URL** — check the run summary, or query your Supabase `tunnel_sessions` table
 
@@ -194,6 +196,60 @@ flowchart LR
 - **Next run auto-queues** for continuous 24/7 operation
 
 > **Limits:** GitHub-hosted runners cap at ~5 hours per run. Videos aren't persisted on GitHub long-term — use upload hosts + Supabase for permanent storage.
+
+---
+
+### :repeat: Multi-Instance Setup (Record 100+ Channels)
+
+GitHub Actions has a ~14 GB disk limit (~3–5 channels max per runner). To record more channels, fork this repo to multiple GitHub accounts — all sharing the same Supabase database.
+
+```mermaid
+flowchart TB
+    subgraph ForkA [Fork A · INSTANCE_ID=a]
+        A1[channels: alice, bob]
+    end
+    subgraph ForkB [Fork B · INSTANCE_ID=b]
+        B1[channels: charlie, dave]
+    end
+    subgraph ForkC [Fork C · INSTANCE_ID=c]
+        C1[channels: eve, frank]
+    end
+    subgraph Supabase [Shared Supabase]
+        DB[(recordings)]
+        DB2[(upload_links)]
+        DB3[(preview_images)]
+        AS[app_settings]
+    end
+    A1 --> DB
+    B1 --> DB
+    C1 --> DB
+    A1 -.->|channels_a| AS
+    B1 -.->|channels_b| AS
+    C1 -.->|channels_c| AS
+```
+
+**How it works:**
+
+| Component | Behavior |
+|-----------|----------|
+| Channels | Isolated per instance via `channels_<instance_id>` in `app_settings` |
+| Tunnels | Isolated per instance — each fork gets its own dashboard URL |
+| Recordings | Shared — all recordings aggregate into one unified video library |
+| Uploads | Shared — all instances upload to the same hosts |
+| Cookies | Shared — one instance's cookie refresh benefits all |
+
+**Setup:**
+
+1. **Fork** this repo to each GitHub account
+2. **Edit `.github/workflows/recorder.yml`** — set a unique `INSTANCE_ID` per fork:
+   ```yaml
+   env:
+     INSTANCE_ID: "b"  # unique per fork: "a", "b", "c", ...
+   ```
+3. **Add the same Supabase secrets** to each fork
+4. **Run `database/migrate.sql`** in your Supabase SQL Editor (one-time setup)
+
+> **Note:** Don't add the same channel username to multiple instances — both would record it simultaneously and create duplicate uploads.
 
 ---
 
@@ -218,10 +274,27 @@ go build -o chaturbate-dvr .
 
 ---
 
+## :database: Database Setup
+
+Run [`database/migrate.sql`](database/migrate.sql) once in your Supabase SQL Editor. It creates all tables, indexes, RLS policies, and permissions. Safe to re-run — uses `IF NOT EXISTS` everywhere.
+
+```sql
+-- Paste the entire contents of database/migrate.sql
+```
+
+This sets up:
+- `channels`, `recordings`, `upload_links` — core DVR data
+- `tunnels`, `tunnel_sessions` — Cloudflare tunnel tracking (per-instance)
+- `app_settings` — channel configs and cookies (per-instance via `channels_<id>`)
+- `channel_logs`, `preview_images`, `disk_usage` — monitoring and metadata
+
+---
+
 ## :gear: Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `INSTANCE_ID` | For multi-instance | Unique ID per fork/runner (e.g., `"a"`, `"b"`, `"c"`) |
 | `SUPABASE_URL` | For Actions | Supabase project URL |
 | `SUPABASE_API_KEY` | For Actions | Supabase anon key |
 | `STREAMTAPE_LOGIN` | For uploads | Streamtape email |
