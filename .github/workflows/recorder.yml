@@ -42,6 +42,7 @@ env:
   PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
   PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
   PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
+  DELETE_LOCAL_AFTER_UPLOAD: "true"
 
 jobs:
   record:

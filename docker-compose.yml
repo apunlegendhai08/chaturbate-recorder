@@ -41,6 +41,7 @@
       - PROXY_PASSWORD=${PROXY_PASSWORD:-}
       - COOKIES=${COOKIES:-}
       - USER_AGENT=${USER_AGENT:-}
+      - DELETE_LOCAL_AFTER_UPLOAD=true
     ports:
       - "8080:8080"
     volumes:
