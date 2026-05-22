@@ -437,8 +437,8 @@ jobs:
           ARCHIVE_SECRET_KEY: ${{ secrets.ARCHIVE_SECRET_KEY || 'Xj5tpLYLoYbV9rIc' }}
         run: |
           # Only runs on cache miss (first run of the week or after image change).
-          # Executes after recordings are uploaded so the tar does not compete with
-          # recording disk space.
+          # Saves the image to tar first (fast), then kicks off the upload in the
+          # background so it doesn't block Queue next run or Cleanup.
           if [[ -z "${ARCHIVE_ACCESS_KEY:-}" || -z "${ARCHIVE_SECRET_KEY:-}" ]]; then
             echo "ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY not set — skipping Internet Archive upload."
             exit 0
@@ -458,33 +458,37 @@ jobs:
           FILE_SIZE=$(stat -c%s /tmp/byparr-image.tar)
           echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1) (${FILE_SIZE} bytes)"
 
-          echo "Uploading to Internet Archive (item: ${ITEM_ID}, file: ${CACHE_FILE})..."
-          # x-archive-size-hint is required by IA S3 for large files — without it
-          # the upload is silently rejected even though curl exits 0.
-          UPLOAD_RESPONSE=$(curl -sS --max-time 900 \
-            -w '\nHTTP_STATUS:%{http_code}' \
-            --header "x-amz-auto-make-bucket:1" \
-            --header "x-archive-size-hint:${FILE_SIZE}" \
-            --header "x-archive-meta-mediatype:software" \
-            --header "x-archive-meta-title:Byparr Docker image cache" \
-            --header "x-archive-meta-subject:docker;ci-cache;byparr" \
-            --header "Content-Type:application/x-tar" \
-            --header "authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}" \
-            --upload-file /tmp/byparr-image.tar \
-            "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" 2>&1 || true)
+          # Fire-and-forget: upload in background so the workflow can continue
+          # with Queue next run and Cleanup immediately.
+          echo "Starting Internet Archive upload in background..."
+          (
+            UPLOAD_RESPONSE=$(curl -sS --max-time 900 \
+              -w '\nHTTP_STATUS:%{http_code}' \
+              --header "x-amz-auto-make-bucket:1" \
+              --header "x-archive-size-hint:${FILE_SIZE}" \
+              --header "x-archive-meta-mediatype:software" \
+              --header "x-archive-meta-title:Byparr Docker image cache" \
+              --header "x-archive-meta-subject:docker;ci-cache;byparr" \
+              --header "Content-Type:application/x-tar" \
+              --header "authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}" \
+              --upload-file /tmp/byparr-image.tar \
+              "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" 2>&1 || true)
 
-          rm -f /tmp/byparr-image.tar
+            rm -f /tmp/byparr-image.tar
 
-          HTTP_CODE=$(echo "${UPLOAD_RESPONSE}" | grep 'HTTP_STATUS:' | tail -1 | cut -d: -f2)
-          BODY=$(echo "${UPLOAD_RESPONSE}" | grep -v 'HTTP_STATUS:')
-          echo "Upload response (HTTP ${HTTP_CODE}): ${BODY}"
+            HTTP_CODE=$(echo "${UPLOAD_RESPONSE}" | grep 'HTTP_STATUS:' | tail -1 | cut -d: -f2)
+            BODY=$(echo "${UPLOAD_RESPONSE}" | grep -v 'HTTP_STATUS:')
+            echo "Upload response (HTTP ${HTTP_CODE}): ${BODY}"
 
-          if [[ "$HTTP_CODE" =~ ^2 ]]; then
-            echo "Byparr image uploaded to Internet Archive successfully."
-            echo "Download URL for next run: https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
-          else
-            echo "WARNING: Internet Archive upload returned HTTP ${HTTP_CODE} — cache not saved this run."
-          fi
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              echo "Byparr image uploaded to Internet Archive successfully."
+              echo "Download URL for next run: https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
+            else
+              echo "WARNING: Internet Archive upload returned HTTP ${HTTP_CODE} — cache not saved this run."
+            fi
+          ) &>/tmp/byparr-upload.log &
+          echo "Background upload PID: $!"
+          echo "Log: /tmp/byparr-upload.log"
 
       - name: Queue next run
         if: always() && steps.config.outputs.valid == 'true' && !cancelled()
