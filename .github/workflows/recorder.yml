@@ -31,8 +31,6 @@ env:
   PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
   DELETE_LOCAL_AFTER_UPLOAD: "true"
   WORKFLOW_FILE: .github/workflows/recorder.yml
-  ARCHIVE_ACCESS_KEY: GeXi0lXq1raqrhAE
-  ARCHIVE_SECRET_KEY: Xj5tpLYLoYbV9rIc
 
 jobs:
   record:
@@ -69,8 +67,6 @@ jobs:
             echo "ERROR: Only ${AVAIL_GB} GB free — need at least 8 GB for recordings + backup."
             exit 1
           fi
-
-          # Weekly cache key is computed in the Byparr cache step.
 
       - name: Clear stale tunnel URL
         if: always()
@@ -171,60 +167,6 @@ jobs:
             401|403) echo "WARNING: authentication failed (HTTP $HTTP_CODE). Check SUPABASE_API_KEY." ;;
             *)   echo "WARNING: unexpected response (HTTP $HTTP_CODE)." ;;
           esac
-
-      - name: Start Byparr from Internet Archive cache
-        id: byparr-cache
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Compute cache key here (not dependent on earlier steps).
-          BYPARR_CACHE_WEEK="$(date +%G-%V)"
-          ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
-          COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
-          CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
-          CACHE_URL="https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
-
-          echo "Checking Internet Archive for cached Byparr image..."
-          echo "  URL: ${CACHE_URL}"
-
-          # Check available disk space before downloading (image can be 500MB+).
-          AVAIL_MB=$(df --output=avail /tmp | tail -1 | awk '{print int($1/1024)}')
-          if (( AVAIL_MB < 1024 )); then
-            echo "WARNING: Only ${AVAIL_MB} MB free in /tmp — skipping Byparr cache download."
-            echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          # No -f flag: let curl exit cleanly so -w always writes the real HTTP
-          # status code. We check the code ourselves below.
-          HTTP_CODE=$(curl -sSL --max-time 300 \
-            -o /tmp/byparr-image.tar \
-            -w '%{http_code}' \
-            "${CACHE_URL}" 2>/dev/null || echo "000")
-
-          if [[ "$HTTP_CODE" == "200" ]] && [[ -s /tmp/byparr-image.tar ]]; then
-            echo "Cache hit ($(du -sh /tmp/byparr-image.tar | cut -f1)). Loading image..."
-            if docker load < /tmp/byparr-image.tar; then
-              rm -f /tmp/byparr-image.tar
-              echo "Starting Byparr..."
-              if docker compose up -d byparr; then
-                echo "BYPARR_CACHE_HIT=true" >> "$GITHUB_ENV"
-              else
-                echo "WARNING: Byparr container failed to start — will be pulled by chaturbate-dvr."
-                echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
-              fi
-            else
-              echo "WARNING: docker load failed — tar may be corrupted. Falling back to pull."
-              rm -f /tmp/byparr-image.tar
-              echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
-            fi
-          else
-            echo "No cache found on Internet Archive (HTTP ${HTTP_CODE})."
-            echo "Byparr will be pulled by Docker Compose when chaturbate-dvr starts."
-            rm -f /tmp/byparr-image.tar
-            echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
-          fi
 
       - name: Build and start chaturbate-dvr
         shell: bash
@@ -468,9 +410,9 @@ jobs:
             echo "=== Recorder stopped ==="
           }
 
-          # Trap fires on SIGTERM/SIGINT — stop the recorder, then break out of
-          # the loop so we don't restart the container after it was just stopped.
-          trap 'stop_recorder; break' INT TERM
+          # Trap fires on SIGTERM/SIGINT — stop the recorder, kill any
+          # background sleep, then break out of the loop.
+          trap 'stop_recorder; kill %% 2>/dev/null; wait 2>/dev/null; break' INT TERM
 
           # Disable set -e inside the while loop so a single failed command
           # (pipe error, docker hiccup) doesn't kill the script and skip
@@ -560,72 +502,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Upload Byparr image to Internet Archive
-        if: always() && env.BYPARR_CACHE_HIT != 'true'
-        shell: bash
-        run: |
-          # Only runs on cache miss (first run of the week or after image change).
-          # Saves the image to tar first (fast), then kicks off the upload in the
-          # background so it doesn't block Queue next run.
-          if [[ -z "${ARCHIVE_ACCESS_KEY:-}" || -z "${ARCHIVE_SECRET_KEY:-}" ]]; then
-            echo "ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY not set — skipping Internet Archive upload."
-            exit 0
-          fi
-
-          if ! docker image inspect ghcr.io/thephaseless/byparr:latest >/dev/null 2>&1; then
-            echo "Byparr image not in Docker store — skipping cache upload."
-            exit 0
-          fi
-
-          # Compute cache key locally (not dependent on earlier steps).
-          BYPARR_CACHE_WEEK="$(date +%G-%V)"
-          ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
-          COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
-          CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
-
-          echo "Saving Byparr image to tar..."
-          docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar
-          FILE_SIZE=$(stat -c%s /tmp/byparr-image.tar)
-          echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1) (${FILE_SIZE} bytes)"
-
-          # Upload in background so the workflow can continue with Queue next run.
-          # Cleanup step will wait for this process to finish before tearing down.
-          echo "Starting Internet Archive upload in background..."
-          nohup bash -c "
-            UPLOAD_RESPONSE=\$(curl -sS --max-time 900 \
-              -w '\nHTTP_STATUS:%{http_code}' \
-              --header 'x-amz-auto-make-bucket:1' \
-              --header 'x-archive-size-hint:${FILE_SIZE}' \
-              --header 'x-archive-meta-mediatype:software' \
-              --header 'x-archive-meta-title:Byparr Docker image cache' \
-              --header 'x-archive-meta-subject:docker;ci-cache;byparr' \
-              --header 'Content-Type:application/x-tar' \
-              --header 'authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}' \
-              --upload-file /tmp/byparr-image.tar \
-              'https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}' 2>&1) || true
-
-            rm -f /tmp/byparr-image.tar
-
-            if [[ -z \"\${UPLOAD_RESPONSE:-}\" ]]; then
-              echo 'ERROR: curl failed with no response — network error or timeout.'
-              exit 1
-            fi
-
-            HTTP_CODE=\$(echo \"\${UPLOAD_RESPONSE}\" | grep 'HTTP_STATUS:' | tail -1 | cut -d: -f2)
-            BODY=\$(echo \"\${UPLOAD_RESPONSE}\" | grep -v 'HTTP_STATUS:')
-            echo \"Upload response (HTTP \${HTTP_CODE}): \${BODY}\"
-
-            if [[ \"\$HTTP_CODE\" =~ ^2 ]]; then
-              echo 'Byparr image uploaded to Internet Archive successfully.'
-            else
-              echo \"WARNING: Internet Archive upload returned HTTP \${HTTP_CODE} — cache not saved this run.\"
-            fi
-          " &>/tmp/byparr-upload.log &
-          BYPARR_UPLOAD_PID=$!
-          echo "Background upload PID: ${BYPARR_UPLOAD_PID}"
-          echo "${BYPARR_UPLOAD_PID}" > /tmp/byparr-upload.pid
-          echo "Log: /tmp/byparr-upload.log"
-
       - name: Queue next run
         if: always() && steps.config.outputs.valid == 'true' && !cancelled()
         env:
@@ -666,29 +542,6 @@ jobs:
         run: |
           set +e
 
-          # Wait for background Byparr upload to finish before tearing down.
-          # The upload runs in a nohup process; wait up to 15 min for it.
-          if [[ -f /tmp/byparr-upload.pid ]]; then
-            BUPID=$(cat /tmp/byparr-upload.pid)
-            echo "Waiting for Byparr upload (PID ${BUPID}, max 15 min)..."
-            # Wait in a loop so we can log progress and not wait forever.
-            for i in {1..90}; do
-              if ! kill -0 "$BUPID" 2>/dev/null; then
-                echo "Byparr upload finished."
-                break
-              fi
-              sleep 10
-            done
-            # If still running after 15 min, let it die with the runner.
-            if kill -0 "$BUPID" 2>/dev/null; then
-              echo "WARNING: Byparr upload still running after 15 min — leaving it for the runner to kill."
-            fi
-            # Show upload log for debugging.
-            echo "=== Byparr upload log ==="
-            cat /tmp/byparr-upload.log 2>/dev/null || echo "(no log)"
-            echo "=== end upload log ==="
-          fi
-
           # Mark tunnel as inactive in tunnel_sessions and clear the live URL
           # from app_settings so the Go code stops advertising a dead tunnel.
           if [[ -n "${SUPABASE_URL}" && -n "${SUPABASE_API_KEY}" ]]; then
@@ -722,6 +575,6 @@ jobs:
           # Stop containers and clean up
           echo "Stopping services..."
           docker compose down --remove-orphans --volumes 2>/dev/null || true
-          docker system prune -af --volumes 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true
 
           echo "Cleanup complete."
