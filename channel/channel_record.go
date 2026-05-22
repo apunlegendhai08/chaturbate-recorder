@@ -14,6 +14,7 @@ import (
 
 // Monitor starts monitoring the channel for live streams and records them.
 func (ch *Channel) Monitor() {
+        defer recoverGoroutine("Monitor", ch.Config.Username)
         client := chaturbate.NewClient()
         ch.Info("starting to record `%s`", ch.Config.Username)
 
@@ -57,6 +58,7 @@ func (ch *Channel) Monitor() {
                                 // it so post-processing (thumbnail, upload, DB save, deletion) can run.
                                 if errors.Is(err, internal.ErrChannelOffline) && ch.File != nil {
                                         go func() {
+                                                defer recoverGoroutine("Cleanup/offline", ch.Config.Username)
                                                 if cerr := ch.Cleanup(false); cerr != nil {
                                                         ch.Error("cleanup on offline: %s", cerr.Error())
                                                 }

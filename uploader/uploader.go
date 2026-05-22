@@ -2,6 +2,8 @@ package uploader
 
 import (
 	"fmt"
+	"log"
+	"runtime"
 	"sync"
 )
 
@@ -52,8 +54,30 @@ type nilLogger struct{}
 func (n *nilLogger) Info(format string, a ...any) {}
 func (n *nilLogger) Error(format string, a ...any) {}
 
-// UploadToAll uploads a file to all configured hosts in parallel
-// Returns a slice of results, one for each host
+// uploadSem limits the number of concurrent uploads to prevent OOM during
+// recovery (e.g. many orphaned files uploading at startup simultaneously).
+var uploadSem = make(chan struct{}, 3)
+
+// recoverUpload catches a panic inside an upload goroutine, logs it with a
+// stack trace, and stores it as an error in the result set.
+func recoverUpload(host string, resultsMu *sync.Mutex, results *[]UploadResult) {
+	if r := recover(); r != nil {
+		buf := make([]byte, 8192)
+		n := runtime.Stack(buf, false)
+		log.Printf("PANIC [upload/%s]: %v\n%s", host, r, buf[:n])
+		resultsMu.Lock()
+		*results = append(*results, UploadResult{
+			Host:  host,
+			Error: fmt.Errorf("upload panic: %v", r),
+		})
+		resultsMu.Unlock()
+	}
+}
+
+// UploadToAll uploads a file to all configured hosts in parallel.
+// At most 3 uploads run concurrently (uploadSem) to cap memory usage.
+// A panic inside any individual upload is caught, logged, and returned as
+// an error — it never crashes the calling goroutine or the whole process.
 func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 	var wg sync.WaitGroup
 	results := []UploadResult{}
@@ -63,14 +87,13 @@ func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer recoverUpload("GoFile", &resultsMu, &results)
+		uploadSem <- struct{}{}
+		defer func() { <-uploadSem }()
 		m.log.Info("upload: starting GoFile upload for %s", filePath)
 		link, err := m.gofile.Upload(filePath)
 		resultsMu.Lock()
-		results = append(results, UploadResult{
-			Host:         "GoFile",
-			DownloadLink: link,
-			Error:        err,
-		})
+		results = append(results, UploadResult{Host: "GoFile", DownloadLink: link, Error: err})
 		resultsMu.Unlock()
 		if err != nil {
 			m.log.Error("upload: GoFile failed for %s: %v", filePath, err)
@@ -84,14 +107,13 @@ func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer recoverUpload("TurboViPlay", &resultsMu, &results)
+			uploadSem <- struct{}{}
+			defer func() { <-uploadSem }()
 			m.log.Info("upload: starting TurboViPlay upload for %s", filePath)
 			link, err := m.turboviplay.Upload(filePath)
 			resultsMu.Lock()
-			results = append(results, UploadResult{
-				Host:         "TurboViPlay",
-				DownloadLink: link,
-				Error:        err,
-			})
+			results = append(results, UploadResult{Host: "TurboViPlay", DownloadLink: link, Error: err})
 			resultsMu.Unlock()
 			if err != nil {
 				m.log.Error("upload: TurboViPlay failed for %s: %v", filePath, err)
@@ -106,14 +128,13 @@ func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer recoverUpload("VOE.sx", &resultsMu, &results)
+			uploadSem <- struct{}{}
+			defer func() { <-uploadSem }()
 			m.log.Info("upload: starting VOE.sx upload for %s", filePath)
 			link, err := m.voesx.Upload(filePath)
 			resultsMu.Lock()
-			results = append(results, UploadResult{
-				Host:         "VOE.sx",
-				DownloadLink: link,
-				Error:        err,
-			})
+			results = append(results, UploadResult{Host: "VOE.sx", DownloadLink: link, Error: err})
 			resultsMu.Unlock()
 			if err != nil {
 				m.log.Error("upload: VOE.sx failed for %s: %v", filePath, err)
@@ -128,14 +149,13 @@ func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer recoverUpload("SendCM", &resultsMu, &results)
+			uploadSem <- struct{}{}
+			defer func() { <-uploadSem }()
 			m.log.Info("upload: starting SendCM upload for %s", filePath)
 			link, err := m.sendcm.Upload(filePath)
 			resultsMu.Lock()
-			results = append(results, UploadResult{
-				Host:         "SendCM",
-				DownloadLink: link,
-				Error:        err,
-			})
+			results = append(results, UploadResult{Host: "SendCM", DownloadLink: link, Error: err})
 			resultsMu.Unlock()
 			if err != nil {
 				m.log.Error("upload: SendCM failed for %s: %v", filePath, err)
@@ -150,14 +170,13 @@ func (m *MultiHostUploader) UploadToAll(filePath string) []UploadResult {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer recoverUpload("Byse", &resultsMu, &results)
+			uploadSem <- struct{}{}
+			defer func() { <-uploadSem }()
 			m.log.Info("upload: starting Byse upload for %s", filePath)
 			link, err := m.byse.Upload(filePath)
 			resultsMu.Lock()
-			results = append(results, UploadResult{
-				Host:         "Byse",
-				DownloadLink: link,
-				Error:        err,
-			})
+			results = append(results, UploadResult{Host: "Byse", DownloadLink: link, Error: err})
 			resultsMu.Unlock()
 			if err != nil {
 				m.log.Error("upload: Byse failed for %s: %v", filePath, err)

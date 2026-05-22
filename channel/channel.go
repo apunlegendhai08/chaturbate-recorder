@@ -6,6 +6,7 @@ import (
         "fmt"
         "log"
         "os"
+        "runtime"
         "sync"
         "sync/atomic"
         "time"
@@ -15,6 +16,17 @@ import (
         "github.com/teacat/chaturbate-dvr/internal"
         "github.com/teacat/chaturbate-dvr/server"
 )
+
+// recoverGoroutine catches and logs a panic from the calling goroutine.
+// Call it via defer at the top of any goroutine body so that a panic is
+// caught and stack-traced instead of crashing the entire process.
+func recoverGoroutine(name, username string) {
+        if r := recover(); r != nil {
+                buf := make([]byte, 8192)
+                n := runtime.Stack(buf, false)
+                log.Printf("PANIC [%s] [%s]: %v\n%s", name, username, r, buf[:n])
+        }
+}
 
 // pendingFile tracks a closed recording file awaiting post-processing
 // (mux, move to output dir, thumbnail, upload, DB save, deletion).
@@ -84,6 +96,7 @@ func New(conf *entity.ChannelConfig) *Channel {
 // Publisher listens for log messages and updates from the channel
 // and publishes once received.
 func (ch *Channel) Publisher() {
+        defer recoverGoroutine("Publisher", ch.Config.Username)
         for {
                 select {
                 case v := <-ch.LogCh:
@@ -201,6 +214,7 @@ func (ch *Channel) Pause() {
         // Finalize any in-progress files immediately so they can be uploaded
         // and removed when `DeleteLocalAfterUpload` is enabled.
         go func() {
+                defer recoverGoroutine("Cleanup/pause", ch.Config.Username)
                 if err := ch.Cleanup(false); err != nil {
                         ch.Error("cleanup on pause: %s", err.Error())
                 }
@@ -233,6 +247,7 @@ func (ch *Channel) Resume(startSeq int) {
         ch.monitorWg.Add(1)
         go func() {
                 defer ch.monitorWg.Done()
+                defer recoverGoroutine("Resume/Monitor", ch.Config.Username)
                 if startSeq > 0 {
                         <-time.After(time.Duration(startSeq) * time.Second)
                 }
@@ -258,6 +273,7 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 // CheckOnlineWhilePaused periodically refreshes room status for paused channels
 // so the UI can still distinguish online/private/offline states.
 func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
+        defer recoverGoroutine("CheckOnlineWhilePaused", ch.Config.Username)
         client := chaturbate.NewClient()
         baseIntervalMinutes := max(server.Config.Interval, 15)
         cfBlockCount := 0

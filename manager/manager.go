@@ -9,6 +9,7 @@ import (
         "net/http"
         "os"
         "path/filepath"
+        "runtime"
         "sort"
         "strings"
         "sync"
@@ -64,16 +65,39 @@ func (m *Manager) SaveConfig() error {
 // StartCookieRefresher launches a background goroutine that calls
 // Byparr/FlareSolverr periodically to obtain fresh cf_clearance cookies
 // and pushes them into the running config automatically.
-// On success it sleeps 30 minutes; on failure it retries after 15 seconds.
+// On success it sleeps 30 minutes.  On failure it uses exponential backoff:
+// 30 s → 1 m → 2 m → 4 m → 8 m → capped at 10 m.
+// The goroutine is panic-safe: a crash inside refreshCookiesOnce is caught,
+// logged with a stack trace, and the loop continues.
 func (m *Manager) StartCookieRefresher() {
         go func() {
+                defer func() {
+                        if r := recover(); r != nil {
+                                buf := make([]byte, 8192)
+                                n := runtime.Stack(buf, false)
+                                log.Printf("PANIC [cookie-refresher]: %v\n%s", r, buf[:n])
+                        }
+                }()
                 // Short delay so the rest of the app finishes initialising first.
                 time.Sleep(10 * time.Second)
+                failCount := 0
                 for {
                         if ok := m.refreshCookiesOnce(); ok {
+                                failCount = 0
                                 time.Sleep(30 * time.Minute)
                         } else {
-                                time.Sleep(15 * time.Second)
+                                failCount++
+                                // Exponential backoff: 30s, 60s, 2m, 4m, 8m, capped at 10m.
+                                shift := failCount - 1
+                                if shift > 4 {
+                                        shift = 4
+                                }
+                                delay := time.Duration(30*(1<<shift)) * time.Second
+                                if delay > 10*time.Minute {
+                                        delay = 10 * time.Minute
+                                }
+                                fmt.Printf("[WARN] [cookie-refresher] retrying in %v (attempt %d)\n", delay, failCount)
+                                time.Sleep(delay)
                         }
                 }
         }()
@@ -152,6 +176,13 @@ func (m *Manager) LoadConfig() error {
 
         // Clean up orphaned sidecar files from previous interrupted runs
         go func() {
+                defer func() {
+                        if r := recover(); r != nil {
+                                buf := make([]byte, 8192)
+                                n := runtime.Stack(buf, false)
+                                log.Printf("PANIC [startup-cleanup]: %v\n%s", r, buf[:n])
+                        }
+                }()
                 channel.CleanupOrphanedFiles()
                 m.ScanThumbnails()
         }()
@@ -250,10 +281,17 @@ func (m *Manager) StopChannel(username string) error {
         }
         fmt.Printf(" INFO [manager] channel %q deleted and persisted to Supabase\n", username)
 
-        // Step 3: non-blocking cleanup — stop the ffmpeg process.
+        // Step 3: non-blocking cleanup — stop the recording process.
         // The channels table row is intentionally left orphaned because it is shared
         // across instances and no longer read by LoadChannelsFromDB.
         go func() {
+                defer func() {
+                        if r := recover(); r != nil {
+                                buf := make([]byte, 8192)
+                                n := runtime.Stack(buf, false)
+                                log.Printf("PANIC [StopChannel/%s]: %v\n%s", username, r, buf[:n])
+                        }
+                }()
                 thing.(*channel.Channel).Stop()
         }()
 
