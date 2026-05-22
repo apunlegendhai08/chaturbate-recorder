@@ -124,7 +124,10 @@ jobs:
           ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
           COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
           CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
-          CACHE_URL="https://archive.org/download/${ITEM_ID}/${CACHE_FILE}"
+          # Use the S3 endpoint directly — archive.org/download requires IA's
+          # processing pipeline which can take hours after upload.
+          # s3.us.archive.org serves public items immediately after upload.
+          CACHE_URL="https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
 
           echo "Checking Internet Archive for cached Byparr image..."
           echo "  URL: ${CACHE_URL}"
@@ -486,21 +489,25 @@ jobs:
           echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1)"
 
           echo "Uploading to Internet Archive (item: ${ITEM_ID}, file: ${CACHE_FILE})..."
-          HTTP_CODE=$(curl -sS --max-time 600 \
-            -w '%{http_code}' -o /dev/null \
+          UPLOAD_RESPONSE=$(curl -sS --max-time 600 \
+            -w '\nHTTP_STATUS:%{http_code}' \
             --header "x-amz-auto-make-bucket:1" \
             --header "x-archive-meta-mediatype:software" \
             --header "x-archive-meta-title:Byparr Docker image cache" \
             --header "x-archive-meta-subject:docker;ci-cache;byparr" \
             --header "authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}" \
             --upload-file /tmp/byparr-image.tar \
-            "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" || echo "000")
+            "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" 2>&1 || true)
 
           rm -f /tmp/byparr-image.tar
 
+          HTTP_CODE=$(echo "${UPLOAD_RESPONSE}" | grep 'HTTP_STATUS:' | tail -1 | cut -d: -f2)
+          BODY=$(echo "${UPLOAD_RESPONSE}" | grep -v 'HTTP_STATUS:')
+          echo "Upload response (HTTP ${HTTP_CODE}): ${BODY}"
+
           if [[ "$HTTP_CODE" =~ ^2 ]]; then
             echo "Byparr image uploaded to Internet Archive successfully."
-            echo "Next run will download from: https://archive.org/download/${ITEM_ID}/${CACHE_FILE}"
+            echo "Download URL for next run: https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
           else
             echo "WARNING: Internet Archive upload returned HTTP ${HTTP_CODE} — cache not saved this run."
           fi
