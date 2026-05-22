@@ -255,8 +255,34 @@ func (ch *Channel) MoveToOutputDir(srcPath string) string {
 }
 
 func (ch *Channel) generatePreviewAndUpload(filePath string) {
+        // Start the video upload IMMEDIATELY in a separate goroutine — do NOT
+        // wait for thumbnail/sprite generation to finish first.  Long recordings
+        // (1 h+) can take 10–15 min to generate sprites on resource-constrained
+        // runners; if the app crashes during that window the upload never starts
+        // and the recording is lost.
+        uploadDone := make(chan struct{})
+        go func() {
+                defer close(uploadDone)
+                defer func() {
+                        if r := recover(); r != nil {
+                                ch.Error("upload: panic recovered for %s: %v", filepath.Base(filePath), r)
+                        }
+                }()
+                ch.uploadFile(filePath, "", "")
+        }()
+
+        // Generate thumbnails in parallel with the upload.
         thumbURL, spriteURL := ch.generateThumbnail(filePath)
-        ch.uploadFile(filePath, thumbURL, spriteURL)
+
+        // If we got preview URLs, save them to Supabase (best-effort).
+        if thumbURL != "" || spriteURL != "" {
+                if err := server.SavePreviewLinks(filepath.Base(filePath), thumbURL, spriteURL); err != nil {
+                        ch.Error("upload: could not save preview links for %s: %v", filepath.Base(filePath), err)
+                }
+        }
+
+        // Wait for upload to finish before returning (so UploadWg stays correct).
+        <-uploadDone
 }
 
 // uniqueDestPath returns path if it does not exist, otherwise appends
@@ -483,14 +509,33 @@ func CleanupOrphanedFiles() {
                         }
                 }
 
-                // Process orphaned muxed files (output from a mux that was never uploaded)
+                // Process orphaned muxed files (output from a mux that was never uploaded).
+                // Upload video FIRST, generate thumbnails in parallel — prevents losing
+                // recordings when the app crashes during sprite generation.
                 for stem, info := range muxedFiles {
                         if _, hasMain := mainVideos[stem]; hasMain {
                                 continue
                         }
                         log.Printf("recovery: processing orphaned muxed file %s", info.name)
+                        // Start upload immediately — don't block on thumbnails.
+                        uploadDone := make(chan bool, 1)
+                        go func(path string) {
+                                defer func() {
+                                        if r := recover(); r != nil {
+                                                log.Printf("recovery: panic during upload of %s: %v", filepath.Base(path), r)
+                                                uploadDone <- false
+                                        }
+                                }()
+                                uploadDone <- uploadOrphanedFile(path, "", "")
+                        }(info.path)
+                        // Generate thumbnails in parallel (best-effort).
                         thumbURL, spriteURL := GenerateThumbnailForFile(info.path)
-                        uploadOrphanedFile(info.path, thumbURL, spriteURL)
+                        if thumbURL != "" || spriteURL != "" {
+                                if err := server.SavePreviewLinks(filepath.Base(info.path), thumbURL, spriteURL); err != nil {
+                                        log.Printf("recovery: could not save preview links for %s: %v", filepath.Base(info.path), err)
+                                }
+                        }
+                        <-uploadDone
                         deleteSidecarFiles(info.path)
                 }
 
@@ -509,9 +554,12 @@ func CleanupOrphanedFiles() {
                         log.Printf("recovery: muxing orphaned split A/V pair %s", stem)
                         if err := muxVideoAudio(vInfo.path, aInfo.path, muxedPath); err != nil {
                                 log.Printf("recovery: mux failed for %s: %v — uploading video-only", stem, err)
-                                // Fall back to uploading just the video track
+                                // Fall back to uploading just the video track — upload first
+                                go func(path string) { uploadOrphanedFile(path, "", "") }(vInfo.path)
                                 thumbURL, spriteURL := GenerateThumbnailForFile(vInfo.path)
-                                uploadOrphanedFile(vInfo.path, thumbURL, spriteURL)
+                                if thumbURL != "" || spriteURL != "" {
+                                        server.SavePreviewLinks(filepath.Base(vInfo.path), thumbURL, spriteURL)
+                                }
                                 deleteSidecarFiles(vInfo.path)
                                 continue
                         }
@@ -520,9 +568,18 @@ func CleanupOrphanedFiles() {
                         os.Remove(vInfo.path)
                         os.Remove(aInfo.path)
 
-                        // Generate thumbnails, upload, and clean up
+                        // Upload first, thumbnails in parallel
+                        uploadDone := make(chan bool, 1)
+                        go func(path string) {
+                                uploadDone <- uploadOrphanedFile(path, "", "")
+                        }(muxedPath)
                         thumbURL, spriteURL := GenerateThumbnailForFile(muxedPath)
-                        uploadOrphanedFile(muxedPath, thumbURL, spriteURL)
+                        if thumbURL != "" || spriteURL != "" {
+                                if err := server.SavePreviewLinks(filepath.Base(muxedPath), thumbURL, spriteURL); err != nil {
+                                        log.Printf("recovery: could not save preview links for %s: %v", filepath.Base(muxedPath), err)
+                                }
+                        }
+                        <-uploadDone
                         deleteSidecarFiles(muxedPath)
                         os.Remove(muxedPath)
                 }

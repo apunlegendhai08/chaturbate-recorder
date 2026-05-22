@@ -36,6 +36,10 @@ func embedURLFromLink(host, link string) string {
 // It uses the channel's logging so upload events appear in the UI logs.
 // GoFile always uploads (no API key needed).
 // Other services upload only if their API key is configured.
+//
+// If every configured host fails on the first attempt, it retries up to 2 more
+// times with a 60-second delay between attempts.  This handles transient network
+// or API outages.
 func (ch *Channel) uploadFile(filePath string, thumbURL, spriteURL string) bool {
         cfg := server.Config
         if cfg == nil {
@@ -54,20 +58,35 @@ func (ch *Channel) uploadFile(filePath string, thumbURL, spriteURL string) bool 
 		ch, // Channel implements uploader.Logger
 	)
 
-        results := upl.UploadToAll(filePath)
-        success := uploader.GetSuccessfulUploads(results)
-        if len(results) > 0 {
-                ch.Info("upload: finished — %d/%d hosts succeeded", len(success), len(results))
-                for _, r := range results {
-                        if r.Error != nil {
-                                ch.Error("upload: [%s] failed: %s", r.Host, r.Error.Error())
-                        } else {
-                                ch.Info("upload: [%s] done — %s", r.Host, r.DownloadLink)
+        // Retry up to 3 times if all hosts fail (handles transient outages).
+        const maxUploadAttempts = 3
+        const retryDelay = 60 * time.Second
+
+        var results []uploader.UploadResult
+        var success []uploader.UploadResult
+        for attempt := 1; attempt <= maxUploadAttempts; attempt++ {
+                results = upl.UploadToAll(filePath)
+                success = uploader.GetSuccessfulUploads(results)
+                if len(results) > 0 {
+                        ch.Info("upload: finished — %d/%d hosts succeeded (attempt %d/%d)", len(success), len(results), attempt, maxUploadAttempts)
+                        for _, r := range results {
+                                if r.Error != nil {
+                                        ch.Error("upload: [%s] failed: %s", r.Host, r.Error.Error())
+                                } else {
+                                        ch.Info("upload: [%s] done — %s", r.Host, r.DownloadLink)
+                                }
                         }
                 }
-                if len(success) == 0 {
-                        ch.Error("upload: all hosts failed for %s", filename)
+                if len(success) > 0 {
+                        break
                 }
+                if attempt < maxUploadAttempts {
+                        ch.Error("upload: all hosts failed for %s — retrying in %s (attempt %d/%d)", filename, retryDelay, attempt, maxUploadAttempts)
+                        time.Sleep(retryDelay)
+                }
+        }
+        if len(success) == 0 {
+                ch.Error("upload: all %d attempts exhausted for %s — file preserved locally for recovery on next restart", maxUploadAttempts, filename)
         }
 
         // Always save preview links to Supabase first — even if video upload fails,
