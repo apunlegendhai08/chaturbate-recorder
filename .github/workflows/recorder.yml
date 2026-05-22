@@ -114,35 +114,40 @@ jobs:
             *)   echo "WARNING: unexpected response (HTTP $HTTP_CODE)." ;;
           esac
 
-      - name: Restore Byparr image cache
+      - name: Start Byparr from Internet Archive cache
         id: byparr-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/byparr-image.tar
-          # Bust cache when docker-compose.yml changes (e.g. new image tag) or weekly
-          # so security updates are picked up automatically.
-          key: byparr-${{ hashFiles('docker-compose.yml') }}-${{ env.BYPARR_CACHE_WEEK }}
-          restore-keys: |
-            byparr-${{ hashFiles('docker-compose.yml') }}-
-
-      - name: Start Byparr in background
         shell: bash
         run: |
-          if [[ "${{ steps.byparr-cache.outputs.cache-hit }}" == "true" ]]; then
-            echo "Loading Byparr image from cache..."
+          # Internet Archive (archive.org) is used as a free, external, permanent
+          # cache.  Downloads are public — no credentials needed to pull.
+          # The item is keyed per-repo (GITHUB_REPOSITORY_ID) so forks don't collide.
+          ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
+          COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
+          CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
+          CACHE_URL="https://archive.org/download/${ITEM_ID}/${CACHE_FILE}"
+
+          echo "Checking Internet Archive for cached Byparr image..."
+          echo "  URL: ${CACHE_URL}"
+
+          HTTP_CODE=$(curl -fsSL --max-time 300 \
+            -o /tmp/byparr-image.tar \
+            -w '%{http_code}' \
+            "${CACHE_URL}" 2>/dev/null || echo "000")
+
+          if [[ "$HTTP_CODE" == "200" ]] && [[ -s /tmp/byparr-image.tar ]]; then
+            echo "Cache hit ($(du -sh /tmp/byparr-image.tar | cut -f1)). Loading image..."
             docker load < /tmp/byparr-image.tar
-            # Remove the tar immediately so the 2.9 GB is freed before recording starts.
-            # The image now lives only inside Docker's own layer store (same footprint
-            # as a normal pull) — recordings get the full remaining disk.
+            # Remove the tar immediately — image lives only in Docker's layer store,
+            # so no extra disk is consumed during recording.
             rm -f /tmp/byparr-image.tar
-            echo "Cache tar removed. Starting Byparr in background..."
+            echo "BYPARR_CACHE_HIT=true" >> "$GITHUB_ENV"
+            echo "Starting Byparr in background..."
             docker compose up -d byparr &
           else
-            # Cache miss (first run or weekly refresh): no tar on disk at all.
-            # docker compose up --build chaturbate-dvr will honour the depends_on
-            # condition and pull + start Byparr automatically before launching the
-            # recorder, so no extra step is needed here.
-            echo "No cached image found — Byparr will be pulled by Docker Compose when chaturbate-dvr starts."
+            echo "No cache found on Internet Archive (HTTP ${HTTP_CODE})."
+            echo "Byparr will be pulled by Docker Compose when chaturbate-dvr starts."
+            rm -f /tmp/byparr-image.tar
+            echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
           fi
 
       - name: Build and start chaturbate-dvr
@@ -476,28 +481,56 @@ jobs:
             -f duration_hours="${next_duration}"
           echo "Queued the next recorder run (duration: ${next_duration}h)."
 
-      - name: Save Byparr image for cache
-        if: always() && steps.byparr-cache.outputs.cache-hit != 'true'
+      - name: Upload Byparr image to Internet Archive
+        if: always() && env.BYPARR_CACHE_HIT != 'true'
         shell: bash
+        env:
+          ARCHIVE_ACCESS_KEY: ${{ secrets.ARCHIVE_ACCESS_KEY }}
+          ARCHIVE_SECRET_KEY: ${{ secrets.ARCHIVE_SECRET_KEY }}
         run: |
-          # Runs after recordings are uploaded so the tar does not compete for disk
-          # during the session.  The cache itself is stored on GitHub's cache servers
-          # (separate 10 GB quota per repo) — it never touches the 14 GB runner disk
-          # beyond this brief save window at job end.
-          if docker image inspect ghcr.io/thephaseless/byparr:latest >/dev/null 2>&1; then
-            echo "Saving Byparr image to tar for caching..."
-            docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar
-            echo "Image saved ($(du -sh /tmp/byparr-image.tar | cut -f1))."
-          else
-            echo "Byparr image not present in Docker — skipping cache save."
+          # Only runs on cache miss (first run of the week or after image change).
+          # Executes after recordings are uploaded so the tar does not compete with
+          # recording disk space.  Requires two GitHub secrets:
+          #   ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY
+          # Get them for free at: https://archive.org/account/s3.php
+          if [[ -z "${ARCHIVE_ACCESS_KEY:-}" || -z "${ARCHIVE_SECRET_KEY:-}" ]]; then
+            echo "ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY not set — skipping Internet Archive upload."
+            echo "Add these secrets to enable caching: https://archive.org/account/s3.php"
+            exit 0
           fi
 
-      - name: Store Byparr image cache
-        if: always() && steps.byparr-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/byparr-image.tar
-          key: byparr-${{ hashFiles('docker-compose.yml') }}-${{ env.BYPARR_CACHE_WEEK }}
+          if ! docker image inspect ghcr.io/thephaseless/byparr:latest >/dev/null 2>&1; then
+            echo "Byparr image not in Docker store — skipping cache upload."
+            exit 0
+          fi
+
+          ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
+          COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
+          CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
+
+          echo "Saving Byparr image to tar..."
+          docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar
+          echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1)"
+
+          echo "Uploading to Internet Archive (item: ${ITEM_ID}, file: ${CACHE_FILE})..."
+          HTTP_CODE=$(curl -sS --max-time 600 \
+            -w '%{http_code}' -o /dev/null \
+            --header "x-amz-auto-make-bucket:1" \
+            --header "x-archive-meta-mediatype:software" \
+            --header "x-archive-meta-title:Byparr Docker image cache" \
+            --header "x-archive-meta-subject:docker;ci-cache;byparr" \
+            --header "authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}" \
+            --upload-file /tmp/byparr-image.tar \
+            "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" || echo "000")
+
+          rm -f /tmp/byparr-image.tar
+
+          if [[ "$HTTP_CODE" =~ ^2 ]]; then
+            echo "Byparr image uploaded to Internet Archive successfully."
+            echo "Next run will download from: https://archive.org/download/${ITEM_ID}/${CACHE_FILE}"
+          else
+            echo "WARNING: Internet Archive upload returned HTTP ${HTTP_CODE} — cache not saved this run."
+          fi
 
       - name: Cleanup
         if: always()
