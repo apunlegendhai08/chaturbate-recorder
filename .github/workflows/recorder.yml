@@ -173,7 +173,7 @@ jobs:
           # We poll until all sidecar/orphan files are gone or we detect a stall.
           echo "Monitoring CleanupOrphanedFiles progress..."
 
-          prev_sidecar=-1
+          prev_total=-1
           stall_ticks=0
           MAX_STALL_TICKS=20  # 20 × 30 s = 10 min with no progress → give up
 
@@ -187,10 +187,12 @@ jobs:
               break
             fi
 
-            if (( sidecar == prev_sidecar )); then
+            # Stall on total file count: catches both stuck mux/upload AND the
+            # case where sidecars reach 0 but final .mp4 uploads are failing.
+            if (( total == prev_total )); then
               stall_ticks=$(( stall_ticks + 1 ))
               if (( stall_ticks >= MAX_STALL_TICKS )); then
-                echo "WARNING: Sidecar count unchanged for 10 minutes — possible upload stall."
+                echo "WARNING: Total file count unchanged for 10 minutes — possible upload stall."
                 echo "Remaining files:"
                 find ./videos -type f 2>/dev/null | sort | head -30 || true
                 echo "Recent container logs:"
@@ -201,7 +203,7 @@ jobs:
               stall_ticks=0
             fi
 
-            prev_sidecar=$sidecar
+            prev_total=$total
             sleep 30
           done
 

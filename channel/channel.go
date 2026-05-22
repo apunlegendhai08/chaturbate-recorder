@@ -161,12 +161,16 @@ func (ch *Channel) Error(format string, a ...any) {
 
 // ExportInfo exports the channel information as a ChannelInfo struct.
 func (ch *Channel) ExportInfo() *entity.ChannelInfo {
+        // Capture file name under cleanupMu to avoid a TOCTOU race with Cleanup,
+        // which sets ch.File = nil while holding that lock.
         var filename string
+        ch.cleanupMu.Lock()
         if ch.CurrentFilename != "" && ch.HasSeparateAudio {
                 filename = ch.CurrentFilename + ".mp4"
         } else if ch.File != nil {
                 filename = ch.File.Name()
         }
+        ch.cleanupMu.Unlock()
         var streamedAt string
         if ch.StreamedAt != 0 {
                 streamedAt = time.Unix(ch.StreamedAt, 0).Format("2006-01-02 15:04 AM")

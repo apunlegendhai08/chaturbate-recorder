@@ -563,6 +563,11 @@ func CleanupOrphanedFiles() {
                                 continue
                         }
 
+                        // Stat source files BEFORE muxing so muxOutputLooksValid can compare
+                        // input vs output sizes (sources may be gone by the time we validate).
+                        videoInfo, _ := os.Stat(vInfo.path)
+                        audioInfo, _ := os.Stat(aInfo.path)
+
                         // Mux the pair
                         muxedPath := filepath.Join(dir, stem+".video.muxed.mp4")
                         log.Printf("recovery: muxing orphaned split A/V pair %s", stem)
@@ -586,7 +591,17 @@ func CleanupOrphanedFiles() {
                                 continue
                         }
 
-                        // Mux succeeded — delete source sidecars.
+                        // Validate mux output before deleting source sidecars — mirrors
+                        // processPendingMuxPair which does the same check.  A corrupt/truncated
+                        // mux (ffmpeg exits 0 but writes nearly-empty output) would permanently
+                        // lose the recording if we deleted the sources first.
+                        if ok, reason := muxOutputLooksValid(muxedPath, videoInfo, audioInfo); !ok {
+                                log.Printf("recovery: mux output looks corrupt (%s) for %s — keeping sidecars for retry on next restart", reason, stem)
+                                os.Remove(muxedPath)
+                                continue
+                        }
+
+                        // Mux validated — safe to remove source sidecars.
                         os.Remove(vInfo.path)
                         os.Remove(aInfo.path)
 
