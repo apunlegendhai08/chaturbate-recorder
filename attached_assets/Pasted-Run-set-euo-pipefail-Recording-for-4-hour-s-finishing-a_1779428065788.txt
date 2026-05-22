@@ -1,0 +1,204 @@
+Run set -euo pipefail
+Recording for 4 hour(s) — finishing at 09:30:36 UTC
+=== docker compose logs (last 50 lines) ===
+chaturbate-dvr  | 
+chaturbate-dvr  |  ██████╗██╗  ██╗ █████╗ ████████╗██╗   ██╗██████╗ ██████╗  █████╗ ████████╗███████╗
+chaturbate-dvr  | ██╔════╝██║  ██║██╔══██╗╚══██╔══╝██║   ██║██╔══██╗██╔══██╗██╔══██╗╚══██╔══╝██╔════╝
+chaturbate-dvr  | ██║     ███████║███████║   ██║   ██║   ██║██████╔╝██████╔╝███████║   ██║   █████╗
+chaturbate-dvr  | ██║     ██╔══██║██╔══██║   ██║   ██║   ██║██╔══██╗██╔══██╗██╔══██║   ██║   ██╔══╝
+chaturbate-dvr  | ╚██████╗██║  ██║██║  ██║   ██║   ╚██████╔╝██║  ██║██████╔╝██║  ██║   ██║   ███████╗
+chaturbate-dvr  |  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+chaturbate-dvr  | ██████╗ ██╗   ██╗██████╗
+chaturbate-dvr  | ██╔══██╗██║   ██║██╔══██╗
+chaturbate-dvr  | ██║  ██║██║   ██║██████╔╝
+chaturbate-dvr  | ██║  ██║╚██╗ ██╔╝██╔══██╗
+chaturbate-dvr  | ██████╔╝ ╚████╔╝ ██║  ██║
+chaturbate-dvr  | ╚═════╝   ╚═══╝  ╚═╝  ╚═╝
+chaturbate-dvr  | 👋 Visit http://localhost:8080 to use the Web UI
+chaturbate-dvr  | 
+chaturbate-dvr  | 
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [kittengirlxo] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [newvay] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [thebrentsavage] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [lunaroyale448] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [aashleyx] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [aya__hitakayama] channel resumed
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [aya__hitakayama] starting to record `aya__hitakayama`
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [goth_kitty_fun] channel resumed
+chaturbate-dvr  | [DEBUG] saveJSONSetting("channels_1240860423"): updated existing row (2088 bytes)
+chaturbate-dvr  |  INFO [cookie-refresher] started — will refresh Cloudflare cookies every 30 minutes
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for aya__hitakayama, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:16  INFO [thebrentsavage] starting to record `thebrentsavage`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for thebrentsavage, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:16 disk: /usr/src/app/videos: total=154894188544 free=92010381312
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:16 | 200 |    4.771906ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:30:17  INFO [aashleyx] starting to record `aashleyx`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for aashleyx, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:18  INFO [newvay] starting to record `newvay`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for newvay, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:19  INFO [kittengirlxo] starting to record `kittengirlxo`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for kittengirlxo, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:20  INFO [lunaroyale448] starting to record `lunaroyale448`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for lunaroyale448, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:21  INFO [goth_kitty_fun] starting to record `goth_kitty_fun`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for goth_kitty_fun, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  |  INFO [cookie-refresher] fetching fresh cookies from Byparr...
+chaturbate-dvr  | 2026/05/22 05:30:34 disk: /usr/src/app/videos: total=154894188544 free=91811323904
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:34 | 200 |    2.439131ms |    40.116.93.52 | GET      "/"
+=== end docker logs ===
+=== docker compose logs (last 50 lines) ===
+chaturbate-dvr  | 2026/05/22 05:30:15  INFO [goth_kitty_fun] channel resumed
+chaturbate-dvr  | [DEBUG] saveJSONSetting("channels_1240860423"): updated existing row (2088 bytes)
+chaturbate-dvr  |  INFO [cookie-refresher] started — will refresh Cloudflare cookies every 30 minutes
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for aya__hitakayama, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:16  INFO [thebrentsavage] starting to record `thebrentsavage`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for thebrentsavage, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:16 disk: /usr/src/app/videos: total=154894188544 free=92010381312
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:16 | 200 |    4.771906ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:30:17  INFO [aashleyx] starting to record `aashleyx`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for aashleyx, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:18  INFO [newvay] starting to record `newvay`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for newvay, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:19  INFO [kittengirlxo] starting to record `kittengirlxo`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for kittengirlxo, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:20  INFO [lunaroyale448] starting to record `lunaroyale448`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for lunaroyale448, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  | 2026/05/22 05:30:21  INFO [goth_kitty_fun] starting to record `goth_kitty_fun`
+chaturbate-dvr  | [INFO] Cloudflare blocked POST API for goth_kitty_fun, trying FlareSolverr/Byparr fallback...
+chaturbate-dvr  |  INFO [cookie-refresher] fetching fresh cookies from Byparr...
+chaturbate-dvr  | 2026/05/22 05:30:34 disk: /usr/src/app/videos: total=154894188544 free=91811323904
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:34 | 200 |    2.439131ms |    40.116.93.52 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:30:36 disk: /usr/src/app/videos: total=154894188544 free=91780784128
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:36 | 200 |    2.104827ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:30:36 disk: /usr/src/app/videos: total=154894188544 free=91780743168
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:30:36 | 200 |    1.869529ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:31:08 disk: /usr/src/app/videos: total=154894188544 free=91636846592
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:08 | 200 |    1.635152ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:09 | 200 |     454.405µs |    103.24.85.86 | GET      "/static/scripts/htmx.min.js"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:09 | 200 |       48.43µs |    103.24.85.86 | GET      "/static/scripts/sse.min.js"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:09 | 200 |     175.036µs |    103.24.85.86 | GET      "/static/styles/app.css"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:09 | 200 |      54.882µs |    103.24.85.86 | GET      "/static/site.webmanifest"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:10 | 200 |      55.232µs |    103.24.85.86 | GET      "/static/favicon-32x32.png"
+chaturbate-dvr  | 2026/05/22 05:31:14 disk: /usr/src/app/videos: total=154894188544 free=91670405120
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:14 | 200 |    2.765673ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:15 | 200 |   4.91003062s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for thebrentsavage failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for aashleyx failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for newvay failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | 2026/05/22 05:31:18 disk: /usr/src/app/videos: total=154894188544 free=91649921024
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:18 | 200 |    2.526037ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for kittengirlxo failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:19 | 200 |  3.891858629s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for lunaroyale448 failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | 2026/05/22 05:31:21 disk: /usr/src/app/videos: total=154894188544 free=91637657600
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:21 | 200 |    1.560812ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:21 | 200 |  2.349766469s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] [cookie-refresher] create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | 2026/05/22 05:31:34 disk: /usr/src/app/videos: total=154894188544 free=91771109376
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:34 | 200 |    1.448054ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:34 | 200 | 12.651548197s |    103.24.85.86 | GET      "/updates?stream=updates"
+=== end docker logs ===
+=== docker compose logs (last 50 lines) ===
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:37 | 200 |    1.660168ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:31:37 disk: /usr/src/app/videos: total=154894188544 free=91736092672
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:37 | 200 |    1.564159ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:37 | 200 |  2.851589035s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for aya__hitakayama failed: get fresh cookies: byparr timeout after 360s (cloudflare 2026 challenges are very aggressive): Post "http://byparr:8191/v1": context deadline exceeded
+chaturbate-dvr  | 2026/05/22 05:31:39 disk: /usr/src/app/videos: total=154894188544 free=91756072960
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:39 | 200 |    1.789458ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:40 | 200 |   2.24295665s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  |  INFO [cookie-refresher] fetching fresh cookies from Byparr...
+chaturbate-dvr  | 2026/05/22 05:31:42 disk: /usr/src/app/videos: total=154894188544 free=91738570752
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:42 | 200 |    2.793995ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:42 | 200 |  2.487774477s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 1/3 for goth_kitty_fun failed: get fresh cookies: byparr timeout after 360s (cloudflare 2026 challenges are very aggressive): Post "http://byparr:8191/v1": context deadline exceeded
+chaturbate-dvr  | 2026/05/22 05:31:46 disk: /usr/src/app/videos: total=154894188544 free=91725459456
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:46 | 200 |    2.286221ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:46 | 200 |  3.978467706s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:31:49 disk: /usr/src/app/videos: total=154894188544 free=91749298176
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:49 | 200 |     1.95757ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:49 | 200 |  2.658082619s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:31:51 disk: /usr/src/app/videos: total=154894188544 free=91744251904
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:51 | 200 |    2.202807ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:52 | 200 |  2.840912069s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:04 disk: /usr/src/app/videos: total=154894188544 free=91655794688
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:04 | 200 |    3.271003ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:05 | 200 | 12.771084598s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:07 disk: /usr/src/app/videos: total=154894188544 free=91686256640
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:07 | 200 |    3.012899ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:08 | 200 |  2.577626141s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:10 | 200 |    1.550544ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:32:10 disk: /usr/src/app/videos: total=154894188544 free=91672043520
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:11 | 200 |   2.95249327s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:13 disk: /usr/src/app/videos: total=154894188544 free=91659755520
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:13 | 200 |    1.695884ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:14 | 200 |  2.877758421s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:16 disk: /usr/src/app/videos: total=154894188544 free=91636305920
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:16 | 200 |    4.549131ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:16 | 200 |  2.407975205s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:19 disk: /usr/src/app/videos: total=154894188544 free=91611414528
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:19 | 200 |     1.65581ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for thebrentsavage failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:19 | 200 |  2.729534451s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for aashleyx failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for newvay failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | 2026/05/22 05:32:21 disk: /usr/src/app/videos: total=154894188544 free=91582341120
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:21 | 200 |    1.306039ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for kittengirlxo failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:22 | 200 |  2.917892646s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:33 disk: /usr/src/app/videos: total=154894188544 free=91641503744
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:33 | 200 |     2.02146ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:33 | 200 | 10.670015855s |    103.24.85.86 | GET      "/updates?stream=updates"
+=== end docker logs ===
+=== docker compose logs (last 50 lines) ===
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:49 | 200 |  2.658082619s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:31:51 disk: /usr/src/app/videos: total=154894188544 free=91744251904
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:51 | 200 |    2.202807ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:31:52 | 200 |  2.840912069s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:04 disk: /usr/src/app/videos: total=154894188544 free=91655794688
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:04 | 200 |    3.271003ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:05 | 200 | 12.771084598s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:07 disk: /usr/src/app/videos: total=154894188544 free=91686256640
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:07 | 200 |    3.012899ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:08 | 200 |  2.577626141s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:10 | 200 |    1.550544ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:32:10 disk: /usr/src/app/videos: total=154894188544 free=91672043520
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:11 | 200 |   2.95249327s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:13 disk: /usr/src/app/videos: total=154894188544 free=91659755520
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:13 | 200 |    1.695884ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:14 | 200 |  2.877758421s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:16 disk: /usr/src/app/videos: total=154894188544 free=91636305920
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:16 | 200 |    4.549131ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:16 | 200 |  2.407975205s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:19 disk: /usr/src/app/videos: total=154894188544 free=91611414528
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:19 | 200 |     1.65581ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for thebrentsavage failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:19 | 200 |  2.729534451s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for aashleyx failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for newvay failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | 2026/05/22 05:32:21 disk: /usr/src/app/videos: total=154894188544 free=91582341120
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:21 | 200 |    1.306039ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for kittengirlxo failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:22 | 200 |  2.917892646s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:33 disk: /usr/src/app/videos: total=154894188544 free=91641503744
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:33 | 200 |     2.02146ms |    103.24.85.86 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:33 | 200 | 10.670015855s |    103.24.85.86 | GET      "/updates?stream=updates"
+chaturbate-dvr  | 2026/05/22 05:32:37 disk: /usr/src/app/videos: total=154894188544 free=91662860288
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:37 | 200 |    2.804646ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | [GIN] 2026/05/22 - 05:32:37 | 200 |    1.582072ms |      172.18.0.1 | GET      "/"
+chaturbate-dvr  | 2026/05/22 05:32:37 disk: /usr/src/app/videos: total=154894188544 free=91662860288
+chaturbate-dvr  | [WARN] [cookie-refresher] create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for aya__hitakayama failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for goth_kitty_fun failed: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  |  INFO [cookie-refresher] fetching fresh cookies from Byparr...
+chaturbate-dvr  | [WARN] FlareSolverr failed for aashleyx: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] Cloudflare blocked aashleyx but bypass did not succeed
+chaturbate-dvr  | 2026/05/22 05:33:23  INFO [aashleyx] blocked by Cloudflare (attempt 1); try with `-cookies` and `-user-agent`? try again in 1 min(s)
+chaturbate-dvr  | [WARN] FlareSolverr failed for newvay: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] Cloudflare blocked newvay but bypass did not succeed
+chaturbate-dvr  | 2026/05/22 05:33:24  INFO [newvay] blocked by Cloudflare (attempt 1); try with `-cookies` and `-user-agent`? try again in 1 min(s)
+chaturbate-dvr  | [WARN] FlareSolverr failed for kittengirlxo: get fresh cookies: create session: Post "http://byparr:8191/v1": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+chaturbate-dvr  | [WARN] Cloudflare blocked kittengirlxo but bypass did not succeed
+chaturbate-dvr  | 2026/05/22 05:33:25  INFO [kittengirlxo] blocked by Cloudflare (attempt 1); try with `-cookies` and `-user-agent`? try again in 1 min(s)
+chaturbate-dvr  | [WARN] FlareSolverr attempt 2/3 for lunaroyale448 failed: get fresh cookies: byparr timeout after 360s (cloudflare 2026 challenges are very aggressive): Post "http://byparr:8191/v1": context deadline exceeded
+=== end docker logs ===
