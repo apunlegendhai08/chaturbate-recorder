@@ -427,37 +427,6 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      - name: Queue next run
-        if: always() && steps.config.outputs.valid == 'true' && !cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          queued_or_running="$(
-            gh run list \
-              --workflow "${WORKFLOW_FILE}" \
-              --limit 20 \
-              --json databaseId,status \
-              --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\"))] | length"
-          )"
-
-          if (( queued_or_running > 0 )); then
-            echo "Another recorder run is already queued or running."
-            exit 0
-          fi
-
-          # Cap at 4 h so every self-queued run stays within the 6-hour GH Actions
-          # job timeout after accounting for setup (~20 min) and upload (~40 min).
-          next_duration="${{ steps.config.outputs.duration }}"
-          if (( next_duration > 4 )); then
-            next_duration=4
-          fi
-          gh workflow run "${WORKFLOW_FILE}" --repo "$GITHUB_REPOSITORY" \
-            -f duration_hours="${next_duration}"
-          echo "Queued the next recorder run (duration: ${next_duration}h)."
-
       - name: Upload Byparr image to Internet Archive
         if: always() && env.BYPARR_CACHE_HIT != 'true'
         shell: bash
@@ -516,6 +485,37 @@ jobs:
           else
             echo "WARNING: Internet Archive upload returned HTTP ${HTTP_CODE} — cache not saved this run."
           fi
+
+      - name: Queue next run
+        if: always() && steps.config.outputs.valid == 'true' && !cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          queued_or_running="$(
+            gh run list \
+              --workflow "${WORKFLOW_FILE}" \
+              --limit 20 \
+              --json databaseId,status \
+              --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\"))] | length"
+          )"
+
+          if (( queued_or_running > 0 )); then
+            echo "Another recorder run is already queued or running."
+            exit 0
+          fi
+
+          # Cap at 4 h so every self-queued run stays within the 6-hour GH Actions
+          # job timeout after accounting for setup (~20 min) and upload (~40 min).
+          next_duration="${{ steps.config.outputs.duration }}"
+          if (( next_duration > 4 )); then
+            next_duration=4
+          fi
+          gh workflow run "${WORKFLOW_FILE}" --repo "$GITHUB_REPOSITORY" \
+            -f duration_hours="${next_duration}"
+          echo "Queued the next recorder run (duration: ${next_duration}h)."
 
       - name: Cleanup
         if: always()
