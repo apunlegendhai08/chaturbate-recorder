@@ -521,16 +521,16 @@ jobs:
               fi
             fi
 
-            # When called from the SIGTERM/SIGINT trap (job cancelled), GitHub
-            # Actions will kill the runner process within ~30 s of the signal.
-            # Use a 25 s timeout so docker compose stop has a chance to deliver
-            # SIGTERM to the container before the runner dies; the container then
-            # continues its own graceful shutdown under the stop_grace_period.
+            # When called from the SIGTERM/SIGINT trap (job cancelled), use
+            # non-blocking docker compose kill so the trap completes immediately
+            # and reaches 'break' before GitHub sends SIGKILL (~7-30 s window).
+            # The container's stop_grace_period (55m) still applies from the
+            # Docker daemon side; we just don't block the runner waiting for it.
             # For a natural timer expiry (no cancel signal), use the full 3000 s
             # (50 min) window so large uploads can complete before SIGKILL.
             if (( CANCEL_SIGNAL )); then
-              echo "=== Run cancelled — sending SIGTERM to container (25 s window before runner dies) ==="
-              docker compose stop -t 25 chaturbate-dvr || true
+              echo "=== Run cancelled — sending SIGTERM to container (non-blocking) ==="
+              docker compose kill -s SIGTERM chaturbate-dvr 2>/dev/null || true
             else
               echo "=== Recording window ended — stopping recorder gracefully (up to 50 min for uploads) ==="
               docker compose stop -t 3000 chaturbate-dvr || true
@@ -625,13 +625,15 @@ jobs:
           done
           set -e
 
-          # Timer expired naturally — gracefully stop the recorder so it can
-          # finalize any active recordings (mux, thumbnail, upload) before the
-          # container is torn down.  stop_recorder sends SIGTERM and gives the
-          # Go app 300 s to finish.  The Go signal handler now correctly stops
-          # all channels first, waits for post-processing, then waits for uploads.
-          echo "=== Recording window ended — stopping recorder gracefully ==="
-          stop_recorder
+          # On cancel the trap's break exits the loop and stop_recorder already
+          # ran (STOPPED=1), so the second call is a no-op.
+          # On natural expiry STOPPED=0 so we call it here with the full timeout.
+          if (( CANCEL_SIGNAL )); then
+            echo "=== Run cancelled — finished ==="
+          else
+            echo "=== Recording window ended — stopping recorder gracefully ==="
+            stop_recorder
+          fi
 
       - name: Back up generated files
         if: always()
