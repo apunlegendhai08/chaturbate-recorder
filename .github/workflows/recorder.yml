@@ -116,7 +116,7 @@ jobs:
 
       - name: Restore Byparr image cache
         id: byparr-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/byparr-image.tar
           # Bust cache when docker-compose.yml changes (e.g. new image tag) or weekly
@@ -128,23 +128,21 @@ jobs:
       - name: Start Byparr in background
         shell: bash
         run: |
-          # Load from cache (fast, local disk) or pull from registry on miss.
-          # Either way, the container is started in the background so chaturbate-dvr
-          # can build in parallel.  The cookie-refresher retries until Byparr is healthy.
           if [[ "${{ steps.byparr-cache.outputs.cache-hit }}" == "true" ]]; then
-            echo "Loading Byparr image from cache (no network pull needed)..."
+            echo "Loading Byparr image from cache..."
             docker load < /tmp/byparr-image.tar
-            echo "Image loaded. Starting Byparr in background..."
+            # Remove the tar immediately so the 2.9 GB is freed before recording starts.
+            # The image now lives only inside Docker's own layer store (same footprint
+            # as a normal pull) — recordings get the full remaining disk.
+            rm -f /tmp/byparr-image.tar
+            echo "Cache tar removed. Starting Byparr in background..."
             docker compose up -d byparr &
           else
-            echo "Cache miss — pulling Byparr image (~2.9 GB) and starting in background..."
-            nohup bash -c '
-              docker compose pull byparr &&
-              docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar &&
-              docker compose up -d byparr
-            ' > /tmp/byparr-start.log 2>&1 &
-            echo $! > /tmp/byparr-start.pid
-            echo "Byparr pull+save+start running in background (PID $(cat /tmp/byparr-start.pid))"
+            # Cache miss (first run or weekly refresh): no tar on disk at all.
+            # docker compose up --build chaturbate-dvr will honour the depends_on
+            # condition and pull + start Byparr automatically before launching the
+            # recorder, so no extra step is needed here.
+            echo "No cached image found — Byparr will be pulled by Docker Compose when chaturbate-dvr starts."
           fi
 
       - name: Build and start chaturbate-dvr
@@ -477,6 +475,29 @@ jobs:
           gh workflow run "${WORKFLOW_FILE}" --repo "$GITHUB_REPOSITORY" \
             -f duration_hours="${next_duration}"
           echo "Queued the next recorder run (duration: ${next_duration}h)."
+
+      - name: Save Byparr image for cache
+        if: always() && steps.byparr-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Runs after recordings are uploaded so the tar does not compete for disk
+          # during the session.  The cache itself is stored on GitHub's cache servers
+          # (separate 10 GB quota per repo) — it never touches the 14 GB runner disk
+          # beyond this brief save window at job end.
+          if docker image inspect ghcr.io/thephaseless/byparr:latest >/dev/null 2>&1; then
+            echo "Saving Byparr image to tar for caching..."
+            docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar
+            echo "Image saved ($(du -sh /tmp/byparr-image.tar | cut -f1))."
+          else
+            echo "Byparr image not present in Docker — skipping cache save."
+          fi
+
+      - name: Store Byparr image cache
+        if: always() && steps.byparr-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/byparr-image.tar
+          key: byparr-${{ hashFiles('docker-compose.yml') }}-${{ env.BYPARR_CACHE_WEEK }}
 
       - name: Cleanup
         if: always()
