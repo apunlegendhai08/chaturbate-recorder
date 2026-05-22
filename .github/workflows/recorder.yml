@@ -37,8 +37,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 1: Recover orphaned recordings from previous runs
   # Runs first, before any new recording starts.  Downloads recording artifacts
-  # from the last 12 hours, starts a short-lived Go container to mux + upload
-  # every orphaned file and persist results to Supabase, then shuts down cleanly.
+  # from the last 12 hours, runs `go run . recover` to mux split A/V pairs and
+  # upload every orphaned file to configured hosts + Supabase, then deletes
+  # local copies.  No Docker needed — the Go binary runs directly on the runner.
   # The `record` job always runs afterwards regardless of this job's outcome.
   # ─────────────────────────────────────────────────────────────────────────────
   recover-orphans:
@@ -133,96 +134,19 @@ jobs:
             echo "has_work=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build and start chaturbate-dvr
+      - name: Install Go
+        if: steps.artifacts.outputs.has_work == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Recover orphaned files
         if: steps.artifacts.outputs.has_work == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo "Starting chaturbate-dvr for orphan recovery..."
-          docker compose up -d --build chaturbate-dvr
-          echo "Container started."
-
-      - name: Wait for web UI
-        if: steps.artifacts.outputs.has_work == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in {1..60}; do
-            if curl -fsS --max-time 5 http://localhost:8080 >/dev/null 2>&1; then
-              echo "Web UI is ready (attempt $attempt)"
-              exit 0
-            fi
-            if (( attempt % 10 == 0 )); then
-              echo "  [${attempt}s elapsed] still waiting — container state:"
-              docker compose ps chaturbate-dvr 2>/dev/null | tail -3 || true
-              docker compose logs --tail=20 chaturbate-dvr 2>/dev/null || true
-            fi
-            sleep 2
-          done
-          echo "ERROR: Web UI did not become ready in 120 s"
-          docker compose logs --tail=100 chaturbate-dvr || true
-          exit 1
-
-      - name: Wait for orphan uploads to complete
-        if: steps.artifacts.outputs.has_work == 'true'
-        shell: bash
-        run: |
-          # The Go app runs CleanupOrphanedFiles automatically on startup.
-          # It muxes split A/V pairs, uploads every file to configured hosts,
-          # saves results to Supabase, then deletes local copies (DELETE_LOCAL_AFTER_UPLOAD=true).
-          # We poll until all sidecar/orphan files are gone or we detect a stall.
-          echo "Monitoring CleanupOrphanedFiles progress..."
-
-          prev_total=-1
-          stall_ticks=0
-          MAX_STALL_TICKS=20  # 20 × 30 s = 10 min with no progress → give up
-
-          for tick in $(seq 1 160); do
-            sidecar=$(find ./videos \( -name "*.video.mp4" -o -name "*.audio.mp4" \) 2>/dev/null | wc -l)
-            total=$(find ./videos -type f 2>/dev/null | wc -l)
-            echo "[$(date -u '+%H:%M:%S')] Files: $total total  |  Sidecars remaining: $sidecar"
-
-            if (( total == 0 )); then
-              echo "✓ All orphaned files uploaded and removed."
-              break
-            fi
-
-            # Stall on total file count: catches both stuck mux/upload AND the
-            # case where sidecars reach 0 but final .mp4 uploads are failing.
-            if (( total == prev_total )); then
-              stall_ticks=$(( stall_ticks + 1 ))
-              if (( stall_ticks >= MAX_STALL_TICKS )); then
-                echo "WARNING: Total file count unchanged for 10 minutes — possible upload stall."
-                echo "Remaining files:"
-                find ./videos -type f 2>/dev/null | sort | head -30 || true
-                echo "Recent container logs:"
-                docker compose logs --tail=50 chaturbate-dvr 2>/dev/null || true
-                break
-              fi
-            else
-              stall_ticks=0
-            fi
-
-            prev_total=$total
-            sleep 30
-          done
-
-          echo ""
-          echo "=== Orphan recovery complete ==="
-          echo "Files remaining: $(find ./videos -type f 2>/dev/null | wc -l)"
-          find ./videos -type f 2>/dev/null | sort | head -20 || true
-
-      - name: Stop container
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          echo "Stopping container after orphan recovery..."
-          # 120 s grace period so any in-flight upload can finish before SIGKILL.
-          docker compose stop -t 120 chaturbate-dvr || true
-          docker compose down --remove-orphans --volumes 2>/dev/null || true
-          docker image prune -f 2>/dev/null || true
-          echo "Container stopped."
+          echo "Recovering orphaned recordings..."
+          go run . recover
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 2: Record and upload (main job, always runs after recover-orphans)

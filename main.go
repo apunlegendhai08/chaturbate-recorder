@@ -8,6 +8,7 @@ import (
         "syscall"
         "time"
 
+        "github.com/teacat/chaturbate-dvr/channel"
         "github.com/teacat/chaturbate-dvr/config"
         "github.com/teacat/chaturbate-dvr/entity"
         "github.com/teacat/chaturbate-dvr/manager"
@@ -198,6 +199,21 @@ func main() {
                         },
                 },
                 Action: start,
+                Commands: []*cli.Command{
+                        {
+                                Name:  "recover",
+                                Usage: "Recover and upload orphaned recordings from videos/ directory without starting the full app",
+                                Action: func(c *cli.Context) error {
+                                        var err error
+                                        server.Config, err = config.New(c)
+                                        if err != nil {
+                                                return fmt.Errorf("new config: %w", err)
+                                        }
+                                        channel.CleanupOrphanedFiles()
+                                        return nil
+                                },
+                        },
+                },
         }
         if err := app.Run(os.Args); err != nil {
                 log.Fatal(err)

@@ -539,6 +539,32 @@ func CleanupOrphanedFiles() {
                         deleteSidecarFiles(info.path)
                 }
 
+                // Process orphaned standalone video files (already-muxed .mp4/.mkv/.ts
+                // that were never uploaded).  Same pattern as muxedFiles above.
+                for stem, info := range mainVideos {
+                        log.Printf("recovery: processing orphaned video file %s", info.name)
+                        uploadDone := make(chan bool, 1)
+                        go func(path string) {
+                                defer func() {
+                                        if r := recover(); r != nil {
+                                                log.Printf("recovery: panic during upload of %s: %v", filepath.Base(path), r)
+                                                uploadDone <- false
+                                        }
+                                }()
+                                uploadDone <- uploadOrphanedFile(path, "", "")
+                        }(info.path)
+                        thumbURL, spriteURL := GenerateThumbnailForFile(info.path)
+                        if thumbURL != "" || spriteURL != "" {
+                                if err := server.SavePreviewLinks(filepath.Base(info.path), thumbURL, spriteURL); err != nil {
+                                        log.Printf("recovery: could not save preview links for %s: %v", filepath.Base(info.path), err)
+                                }
+                        }
+                        <-uploadDone
+                        // uploadOrphanedFile deletes on success when DeleteLocalAfterUpload=true.
+                        // If upload failed, keep the file for retry on next restart.
+                        _ = stem
+                }
+
                 // Process orphaned split A/V pairs (mux them first, then upload)
                 for stem, vInfo := range videoParts {
                         if _, hasMain := mainVideos[stem]; hasMain {
