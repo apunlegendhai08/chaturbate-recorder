@@ -486,15 +486,20 @@ jobs:
 
           echo "Saving Byparr image to tar..."
           docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar
-          echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1)"
+          FILE_SIZE=$(stat -c%s /tmp/byparr-image.tar)
+          echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1) (${FILE_SIZE} bytes)"
 
           echo "Uploading to Internet Archive (item: ${ITEM_ID}, file: ${CACHE_FILE})..."
-          UPLOAD_RESPONSE=$(curl -sS --max-time 600 \
+          # x-archive-size-hint is required by IA S3 for large files — without it
+          # the upload is silently rejected even though curl exits 0.
+          UPLOAD_RESPONSE=$(curl -sS --max-time 900 \
             -w '\nHTTP_STATUS:%{http_code}' \
             --header "x-amz-auto-make-bucket:1" \
+            --header "x-archive-size-hint:${FILE_SIZE}" \
             --header "x-archive-meta-mediatype:software" \
             --header "x-archive-meta-title:Byparr Docker image cache" \
             --header "x-archive-meta-subject:docker;ci-cache;byparr" \
+            --header "Content-Type:application/x-tar" \
             --header "authorization: LOW ${ARCHIVE_ACCESS_KEY}:${ARCHIVE_SECRET_KEY}" \
             --upload-file /tmp/byparr-image.tar \
             "https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}" 2>&1 || true)
