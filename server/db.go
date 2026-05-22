@@ -1,17 +1,17 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+        "bytes"
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "os"
+        "strings"
+        "time"
 
-	"github.com/teacat/chaturbate-dvr/database"
-	"github.com/teacat/chaturbate-dvr/entity"
+        "github.com/teacat/chaturbate-dvr/database"
+        "github.com/teacat/chaturbate-dvr/entity"
 )
 
 // ─── Instance ID ──────────────────────────────────────────────────────────────
@@ -19,14 +19,31 @@ import (
 var instanceID string
 
 func init() {
-	instanceID = os.Getenv("INSTANCE_ID")
-	if instanceID == "" {
-		instanceID = "default"
-	}
+        instanceID = os.Getenv("INSTANCE_ID")
+        if instanceID == "" {
+                // "default" would cause every repo that omits INSTANCE_ID to share
+                // the same channels_ and dvr_settings_ keys in Supabase, meaning
+                // all instances would overwrite each other's channel lists and
+                // cookies. Fall back to the OS hostname (unique per container) and
+                // emit a loud warning so the operator knows to set INSTANCE_ID.
+                if h, err := os.Hostname(); err == nil && h != "" {
+                        instanceID = h
+                } else {
+                        instanceID = "unknown"
+                }
+                fmt.Printf("[WARN] INSTANCE_ID env var is not set — using %q as instance ID. "+
+                        "Set INSTANCE_ID in your GitHub Actions secrets (or docker-compose env) to "+
+                        "avoid channel/settings collisions between repos sharing the same Supabase project.\n",
+                        instanceID)
+        }
 }
 
 func channelsKey() string {
-	return "channels_" + instanceID
+        return "channels_" + instanceID
+}
+
+func settingsKey() string {
+        return "dvr_settings_" + instanceID
 }
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
@@ -92,8 +109,8 @@ func supabaseRequestWithPrefer(method, path string, body []byte, prefer string) 
         if prefer != "" {
                 req.Header.Set("Prefer", prefer)
         }
-	client := &http.Client{Timeout: 60 * time.Second}
-	return client.Do(req)
+        client := &http.Client{Timeout: 60 * time.Second}
+        return client.Do(req)
 }
 
 // CheckSupabase verifies the app_settings table is reachable via the REST API.
@@ -214,18 +231,18 @@ func SaveChannelsToDB(data []byte) error {
                 return fmt.Errorf("Supabase not configured")
         }
 
-	// ── Primary (blocking): update the authoritative channel list blob. ──────
-	if err := saveJSONSetting(channelsKey(), data); err != nil {
-		return fmt.Errorf("save channels to app_settings: %w", err)
-	}
+        // ── Primary (blocking): update the authoritative channel list blob. ──────
+        if err := saveJSONSetting(channelsKey(), data); err != nil {
+                return fmt.Errorf("save channels to app_settings: %w", err)
+        }
 
-	// ── Secondary (non-blocking): sync individual rows for FK integrity. ─────
-	// Deliberately fire-and-forget — a slow or failed upsert must never block
-	// the delete/pause/resume HTTP response.
-	// NOTE: These rows are shared across instances and are no longer read by
-	// LoadChannelsFromDB (the fallback was removed). They are kept only for
-	// backward compatibility with external tools that query the channels table.
-	dataCopy := make([]byte, len(data))
+        // ── Secondary (non-blocking): sync individual rows for FK integrity. ─────
+        // Deliberately fire-and-forget — a slow or failed upsert must never block
+        // the delete/pause/resume HTTP response.
+        // NOTE: These rows are shared across instances and are no longer read by
+        // LoadChannelsFromDB (the fallback was removed). They are kept only for
+        // backward compatibility with external tools that query the channels table.
+        dataCopy := make([]byte, len(data))
         copy(dataCopy, data)
         go func() {
                 var configs []*entity.ChannelConfig
@@ -259,32 +276,45 @@ func SaveChannelsToDB(data []byte) error {
 // The legacy fallback to the channels table has been removed because the channels
 // table is shared across all instances and would leak other instances' channels.
 func LoadChannelsFromDB() []byte {
-	client := GetDBClient()
-	if client == nil {
-		return nil
-	}
+        client := GetDBClient()
+        if client == nil {
+                return nil
+        }
 
-	// Read the instance-namespaced channel list blob from app_settings.
-	if data := loadJSONSetting(channelsKey()); data != nil {
-		return data
-	}
+        // Read the instance-namespaced channel list blob from app_settings.
+        if data := loadJSONSetting(channelsKey()); data != nil {
+                return data
+        }
 
-	// No channels configured yet for this instance.
-	fmt.Printf("[INFO] LoadChannelsFromDB: no channels blob found for instance %q\n", instanceID)
-	return nil
+        // No channels configured yet for this instance.
+        fmt.Printf("[INFO] LoadChannelsFromDB: no channels blob found for instance %q\n", instanceID)
+        return nil
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 func SaveSettingsToDB(data []byte) error {
-        if err := saveJSONSetting("dvr_settings", data); err != nil {
+        if err := saveJSONSetting(settingsKey(), data); err != nil {
                 return fmt.Errorf("save settings to Supabase: %w", err)
         }
         return nil
 }
 
 func LoadSettingsFromDB() []byte {
-        return loadJSONSetting("dvr_settings")
+        // Try the instance-scoped key first (dvr_settings_<instanceID>).
+        // Fall back to the legacy unscoped key so existing deployments that
+        // stored settings under "dvr_settings" still load their cookies/UA on
+        // first upgrade. The next SaveSettings call will write to the scoped key,
+        // so the migration is automatic and transparent.
+        if data := loadJSONSetting(settingsKey()); data != nil {
+                return data
+        }
+        if data := loadJSONSetting("dvr_settings"); data != nil {
+                fmt.Printf("[INFO] LoadSettingsFromDB: migrating settings from legacy key %q to %q\n",
+                        "dvr_settings", settingsKey())
+                return data
+        }
+        return nil
 }
 
 // ─── Recordings ───────────────────────────────────────────────────────────────
@@ -497,12 +527,12 @@ func SaveRecordingWithLinks(username, filename, timestamp, roomTitle string, tag
                 Filesize:  filesize,
                 Gender:    gender,
                 EmbedURL:  embedURL,
-	}
-	// Skip channel_id lookup — the channels table is shared across instances
-	// and the FK would point to the wrong instance's row.
-	// Recordings are uniquely identified by filename, so channel_id is cosmetic.
+        }
+        // Skip channel_id lookup — the channels table is shared across instances
+        // and the FK would point to the wrong instance's row.
+        // Recordings are uniquely identified by filename, so channel_id is cosmetic.
 
-	// Save recording first
+        // Save recording first
         if err := client.SaveRecording(rec); err != nil {
                 return fmt.Errorf("save recording: %w", err)
         }
@@ -537,57 +567,57 @@ func SaveRecordingWithLinks(username, filename, timestamp, roomTitle string, tag
 
 // SaveTunnelToDB saves a tunnel URL to Supabase
 func SaveTunnelToDB(tunnelURL string, runID int) error {
-	client := GetDBClient()
-	if client == nil {
-		return fmt.Errorf("Supabase not configured")
-	}
+        client := GetDBClient()
+        if client == nil {
+                return fmt.Errorf("Supabase not configured")
+        }
 
-	if err := client.DeactivateOldTunnels(instanceID); err != nil {
-		fmt.Printf("[WARN] failed to deactivate old tunnels: %v\n", err)
-	}
+        if err := client.DeactivateOldTunnels(instanceID); err != nil {
+                fmt.Printf("[WARN] failed to deactivate old tunnels: %v\n", err)
+        }
 
-	tunnel := &database.Tunnel{
-		URL:        tunnelURL,
-		RunID:      runID,
-		InstanceID: instanceID,
-		IsActive:   true,
-	}
+        tunnel := &database.Tunnel{
+                URL:        tunnelURL,
+                RunID:      runID,
+                InstanceID: instanceID,
+                IsActive:   true,
+        }
 
-	return client.SaveTunnel(tunnel)
+        return client.SaveTunnel(tunnel)
 }
 
 // LoadCurrentTunnel loads the active tunnel URL from Supabase
 func LoadCurrentTunnel() (string, error) {
-	client := GetDBClient()
-	if client == nil {
-		return "", nil
-	}
+        client := GetDBClient()
+        if client == nil {
+                return "", nil
+        }
 
-	tunnel, err := client.GetActiveTunnel(instanceID)
-	if err != nil {
-		return "", err
-	}
+        tunnel, err := client.GetActiveTunnel(instanceID)
+        if err != nil {
+                return "", err
+        }
 
-	return tunnel.URL, nil
+        return tunnel.URL, nil
 }
 
 // ─── Preview Links ────────────────────────────────────────────────────────────
 
 // SavePreviewLinks saves preview image URLs to Supabase
 func SavePreviewLinks(filename, thumbnailURL, spriteURL string) error {
-	client := GetDBClient()
-	if client == nil {
-		return fmt.Errorf("Supabase not configured")
-	}
+        client := GetDBClient()
+        if client == nil {
+                return fmt.Errorf("Supabase not configured")
+        }
 
-	img := &database.PreviewImage{
-		Filename:     filename,
-		ThumbnailURL: thumbnailURL,
-		SpriteURL:    spriteURL,
-		UploadedAt:   time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
+        img := &database.PreviewImage{
+                Filename:     filename,
+                ThumbnailURL: thumbnailURL,
+                SpriteURL:    spriteURL,
+                UploadedAt:   time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+        }
 
-	return client.SavePreviewImage(img)
+        return client.SavePreviewImage(img)
 }
 
 // LoadPreviewLinks loads preview image URLs from Supabase

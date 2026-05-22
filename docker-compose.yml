@@ -9,8 +9,9 @@
       - TIMEOUT=180
       - LOG_LEVEL=INFO
     restart: unless-stopped
-    # NOTE: /health spawns a browser instance and is slow (5-30s).
-    # For the workflow wait loop we use the faster /docs endpoint instead.
+    # /health returns 200 as soon as FastAPI and the Playwright browser are
+    # ready. /docs triggers an internal wait_for_load_state("networkidle")
+    # that always times out during startup — do NOT use it as a readiness probe.
     # Reduced start_period and retries to cut startup time from ~7 min to ~2 min.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8191/health"]
