@@ -374,6 +374,9 @@ jobs:
           # Guard variable: stop_recorder must only run once. Set by the trap
           # or by natural timeout; checked to prevent double-invocation.
           STOPPED=0
+          # Set to 1 by the SIGTERM/SIGINT trap so stop_recorder knows the job
+          # was externally cancelled (shorter shutdown window vs. natural expiry).
+          CANCEL_SIGNAL=0
           # Counter for consecutive crash-restart cycles.
           restart_count=0
           MAX_RESTARTS=10
@@ -384,8 +387,6 @@ jobs:
             # Idempotency guard — prevents double-invocation (trap + natural timeout).
             if (( STOPPED )); then return; fi
             STOPPED=1
-
-            echo "=== Stopping recorder gracefully (waiting up to 50 min for uploads+Supabase) ==="
 
             # Videos live on the host via bind mount (./videos), so no need to
             # docker compose cp — the files are already outside the container.
@@ -400,19 +401,30 @@ jobs:
               fi
             fi
 
-            # 3000 s (50 min) gives the Go app time to finalize recordings,
-            # upload large files to all hosts, and persist metadata to Supabase
-            # before Docker falls back to SIGKILL.
-            docker compose stop -t 3000 chaturbate-dvr || true
+            # When called from the SIGTERM/SIGINT trap (job cancelled), GitHub
+            # Actions will kill the runner process within ~30 s of the signal.
+            # Use a 25 s timeout so docker compose stop has a chance to deliver
+            # SIGTERM to the container before the runner dies; the container then
+            # continues its own graceful shutdown under the stop_grace_period.
+            # For a natural timer expiry (no cancel signal), use the full 3000 s
+            # (50 min) window so large uploads can complete before SIGKILL.
+            if (( CANCEL_SIGNAL )); then
+              echo "=== Run cancelled — sending SIGTERM to container (25 s window before runner dies) ==="
+              docker compose stop -t 25 chaturbate-dvr || true
+            else
+              echo "=== Recording window ended — stopping recorder gracefully (up to 50 min for uploads) ==="
+              docker compose stop -t 3000 chaturbate-dvr || true
+            fi
 
             # Videos are on the host via bind mount — log final state.
             echo "Final videos on host: $(find ./videos -maxdepth 2 -type f 2>/dev/null | wc -l) files ($(du -sh ./videos 2>/dev/null | cut -f1))"
             echo "=== Recorder stopped ==="
           }
 
-          # Trap fires on SIGTERM/SIGINT — stop the recorder, kill any
-          # background sleep, then break out of the loop.
-          trap 'stop_recorder; kill %% 2>/dev/null; wait 2>/dev/null; break' INT TERM
+          # Trap fires on SIGTERM/SIGINT (job cancelled by GitHub Actions or user).
+          # Record that we were cancelled so stop_recorder uses the short timeout,
+          # then stop the recorder, kill any sleeping background process, and break.
+          trap 'CANCEL_SIGNAL=1; stop_recorder; kill %% 2>/dev/null; wait 2>/dev/null; break' INT TERM
 
           # Disable set -e inside the while loop so a single failed command
           # (pipe error, docker hiccup) doesn't kill the script and skip
@@ -424,8 +436,24 @@ jobs:
             # of state, so a crashed container would never be detected.
             if ! docker compose ps --filter status=running --services | grep -qx "chaturbate-dvr"; then
               restart_count=$(( restart_count + 1 ))
-              echo "chaturbate-dvr is not running (crash #${restart_count}/${MAX_RESTARTS}). Recent logs:"
-              docker compose logs --tail=120 chaturbate-dvr || true
+              echo "chaturbate-dvr is not running (crash #${restart_count}/${MAX_RESTARTS}) — diagnostics:"
+
+              # Capture exit code, OOMKilled flag, and stop time so we know the
+              # root cause (OOM kill → increase memory limit; exit 2 → Go panic;
+              # exit 137 → SIGKILL from outside; exit 1 → log.Fatal).
+              echo "--- docker inspect ---"
+              docker inspect chaturbate-dvr \
+                --format='ExitCode={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}} Error="{{.State.Error}}" FinishedAt={{.State.FinishedAt}}' \
+                2>/dev/null || true
+
+              # Memory and disk state at time of crash.
+              echo "--- resource state at crash ---"
+              docker stats --no-stream --format "MEM: {{.MemUsage}}  CPU: {{.CPUPerc}}" chaturbate-dvr 2>/dev/null || true
+              AVAIL_GB_CRASH=$(df --output=avail / | tail -1 | awk '{print int($1/1048576)}')
+              echo "Disk available: ${AVAIL_GB_CRASH} GB"
+
+              echo "--- recent container logs (last 300 lines) ---"
+              docker compose logs --tail=300 chaturbate-dvr || true
 
               if (( restart_count > MAX_RESTARTS )); then
                 echo "ERROR: Too many consecutive crashes (${restart_count}) — giving up."
@@ -452,11 +480,16 @@ jobs:
             fi
 
             loop_iter=$(( loop_iter + 1 ))
-            # Log disk health every 5 min (every 5 iterations at 60s sleep).
+            # Log health every 5 min (every 5 iterations at 60s sleep).
             if (( loop_iter % 5 == 0 )); then
-              echo "=== docker compose logs (last 50 lines) ==="
-              docker compose logs --tail=50 chaturbate-dvr 2>/dev/null || true
-              echo "=== end docker logs ==="
+              echo "=== health check ($(date -u '+%H:%M UTC')) ==="
+              # Memory/CPU snapshot — helps spot OOM trends before a crash occurs.
+              docker stats --no-stream \
+                --format "MEM: {{.MemUsage}}  CPU: {{.CPUPerc}}  NET: {{.NetIO}}" \
+                chaturbate-dvr 2>/dev/null || true
+              # 300-line tail captures full crash output if the container just died.
+              docker compose logs --tail=300 chaturbate-dvr 2>/dev/null || true
+              echo "=== end health check ==="
             fi
 
             # Check disk space — warn if low (recording will fail when disk is full).

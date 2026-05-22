@@ -113,20 +113,36 @@ func (ch *Channel) WithCancel(ctx context.Context) (context.Context, context.Can
 }
 
 // Info logs an informational message.
+// Non-blocking: if the Publisher goroutine has already exited (channel stopped),
+// the message is dropped from the SSE feed but still printed to the process log.
 func (ch *Channel) Info(format string, a ...any) {
-        ch.LogCh <- fmt.Sprintf("%s [INFO] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        msg := fmt.Sprintf("%s [INFO] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        select {
+        case ch.LogCh <- msg:
+        case <-ch.done:
+        }
         log.Printf(" INFO [%s] %s", ch.Config.Username, fmt.Sprintf(format, a...))
 }
 
 // Warn logs a warning message.
+// Non-blocking after stop: see Info for details.
 func (ch *Channel) Warn(format string, a ...any) {
-        ch.LogCh <- fmt.Sprintf("%s [WARN] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        msg := fmt.Sprintf("%s [WARN] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        select {
+        case ch.LogCh <- msg:
+        case <-ch.done:
+        }
         log.Printf(" WARN [%s] %s", ch.Config.Username, fmt.Sprintf(format, a...))
 }
 
 // Error logs an error message.
+// Non-blocking after stop: see Info for details.
 func (ch *Channel) Error(format string, a ...any) {
-        ch.LogCh <- fmt.Sprintf("%s [ERROR] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        msg := fmt.Sprintf("%s [ERROR] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
+        select {
+        case ch.LogCh <- msg:
+        case <-ch.done:
+        }
         log.Printf("ERROR [%s] %s", ch.Config.Username, fmt.Sprintf(format, a...))
 }
 

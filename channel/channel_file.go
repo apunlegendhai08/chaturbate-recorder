@@ -546,6 +546,20 @@ func CleanupOrphanedFiles() {
                         }
                         aInfo, hasAudio := audioParts[stem]
                         if !hasAudio {
+                                // Audio sidecar is missing — upload the video track on its own
+                                // rather than silently skipping the recording.  This handles
+                                // crashes that happen before any audio segment is written.
+                                log.Printf("recovery: no audio sidecar for %s — uploading video-only", filepath.Base(vInfo.path))
+                                uploadDone := make(chan bool, 1)
+                                go func(path string) {
+                                        uploadDone <- uploadOrphanedFile(path, "", "")
+                                }(vInfo.path)
+                                thumbURL, spriteURL := GenerateThumbnailForFile(vInfo.path)
+                                if thumbURL != "" || spriteURL != "" {
+                                        server.SavePreviewLinks(filepath.Base(vInfo.path), thumbURL, spriteURL)
+                                }
+                                <-uploadDone
+                                deleteSidecarFiles(vInfo.path)
                                 continue
                         }
 
@@ -554,21 +568,29 @@ func CleanupOrphanedFiles() {
                         log.Printf("recovery: muxing orphaned split A/V pair %s", stem)
                         if err := muxVideoAudio(vInfo.path, aInfo.path, muxedPath); err != nil {
                                 log.Printf("recovery: mux failed for %s: %v — uploading video-only", stem, err)
-                                // Fall back to uploading just the video track — upload first
-                                go func(path string) { uploadOrphanedFile(path, "", "") }(vInfo.path)
+                                // Mux failed (e.g. corrupt/empty audio) — upload the video track
+                                // synchronously so a crash during upload doesn't silently lose it.
+                                uploadDone := make(chan bool, 1)
+                                go func(path string) {
+                                        uploadDone <- uploadOrphanedFile(path, "", "")
+                                }(vInfo.path)
                                 thumbURL, spriteURL := GenerateThumbnailForFile(vInfo.path)
                                 if thumbURL != "" || spriteURL != "" {
                                         server.SavePreviewLinks(filepath.Base(vInfo.path), thumbURL, spriteURL)
                                 }
+                                <-uploadDone
+                                // Remove the empty/corrupt audio sidecar so the next restart
+                                // does not attempt the failing mux again.
+                                os.Remove(aInfo.path)
                                 deleteSidecarFiles(vInfo.path)
                                 continue
                         }
 
-                        // Delete source sidecars
+                        // Mux succeeded — delete source sidecars.
                         os.Remove(vInfo.path)
                         os.Remove(aInfo.path)
 
-                        // Upload first, thumbnails in parallel
+                        // Upload first, thumbnails in parallel.
                         uploadDone := make(chan bool, 1)
                         go func(path string) {
                                 uploadDone <- uploadOrphanedFile(path, "", "")
@@ -581,7 +603,11 @@ func CleanupOrphanedFiles() {
                         }
                         <-uploadDone
                         deleteSidecarFiles(muxedPath)
-                        os.Remove(muxedPath)
+                        // Do NOT unconditionally remove the muxed file here.
+                        // uploadOrphanedFile deletes it when DeleteLocalAfterUpload=true and
+                        // upload succeeded.  If upload failed the file must be kept so the
+                        // next restart can retry — removing it here would permanently lose
+                        // the recording.
                 }
 
                 // Clean up orphaned sidecar files whose main video no longer exists

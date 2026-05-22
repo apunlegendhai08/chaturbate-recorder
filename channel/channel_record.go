@@ -42,6 +42,7 @@ func (ch *Channel) Monitor() {
                                 ch.Info("blocked by Cloudflare (attempt %d); try with `-cookies` and `-user-agent`? try again in %d min(s)", cfBlockCount, delay)
                         } else if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
                                 cfBlockCount = 0
+                                ch.Sequence = 0
                                 ch.stateMu.Lock()
                                 ch.RoomStatus = client.LastRoomStatus
                                 ch.stateMu.Unlock()
@@ -63,10 +64,12 @@ func (ch *Channel) Monitor() {
                                 }
                         } else if errors.Is(err, internal.ErrStreamStalled) {
                                 // CDN session expired mid-stream (common with LL-HLS tokens).
-                                // The current file has already been finalised by the deferred
-                                // Cleanup in RecordStream.  Just re-fetch a fresh HLS URL.
+                                // The current segment file has been queued (not finalised) by
+                                // the deferred Cleanup in RecordStream — it will be processed
+                                // together with all other segments when the stream ends.
+                                // Reconnect quickly with a fresh HLS URL.
                                 cfBlockCount = 0
-                                ch.Info("stream stalled (CDN session expired) — re-fetching fresh URL in %d min(s)", server.Config.Interval)
+                                ch.Info("stream stalled (CDN session expired) — re-fetching fresh HLS URL")
                         } else if errors.Is(err, context.Canceled) {
                                 cfBlockCount = 0
                         } else {
@@ -78,6 +81,9 @@ func (ch *Channel) Monitor() {
                 customDelay := func(_ uint, err error, _ *retry.Config) time.Duration {
                         if isCFBlock(err) {
                                 return time.Duration(cfBackoffMinutes(cfBlockCount, server.Config.Interval)) * time.Minute
+                        }
+                        if errors.Is(err, internal.ErrStreamStalled) {
+                                return 5 * time.Second
                         }
                         return time.Duration(server.Config.Interval) * time.Minute
                 }
@@ -105,14 +111,20 @@ func (ch *Channel) Monitor() {
 }
 
 // Update sends an update signal to the channel's update channel.
-// This notifies the Server-sent Event to boradcast the channel information to the client.
+// This notifies the Server-sent Event to broadcast the channel information to the client.
+// Non-blocking after stop: if the Publisher goroutine has already exited (ch.done is
+// closed), the update is silently dropped to prevent a goroutine deadlock during
+// graceful shutdown.
 func (ch *Channel) Update() {
-        ch.UpdateCh <- true
+        select {
+        case ch.UpdateCh <- true:
+        case <-ch.done:
+        }
 }
 
 // RecordStream records the stream of the channel using the provided client.
 // It retrieves the stream information and starts watching the segments.
-func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) error {
+func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) (retErr error) {
         stream, err := client.GetStream(ctx, ch.Config.Username)
         if err != nil {
                 return fmt.Errorf("get stream: %w", err)
@@ -132,7 +144,6 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
         ch.Framerate = playlist.Framerate
 
         ch.StreamedAt = time.Now().Unix()
-        ch.Sequence = 0
         ch.InitSegment = nil
         ch.AudioInitSegment = nil
         ch.HasSeparateAudio = playlist.AudioPlaylistURL != ""
@@ -142,9 +153,15 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
                 return fmt.Errorf("next file: %w", err)
         }
 
-        // Ensure file is cleaned up when this function exits in any case
+        // Ensure file is cleaned up when this function exits.
+        // If exiting due to a CDN stall (ErrStreamStalled), use rotation mode so
+        // the current segment is queued but NOT yet post-processed — it will be
+        // merged with subsequent reconnect segments and processed together when
+        // the stream actually ends. For any other exit (offline, error, cancel)
+        // process the full pending queue immediately.
         defer func() {
-                if err := ch.Cleanup(false); err != nil {
+                isStall := errors.Is(retErr, internal.ErrStreamStalled)
+                if err := ch.Cleanup(isStall); err != nil {
                         ch.Error("cleanup on record stream exit: %s", err.Error())
                 }
         }()
