@@ -485,17 +485,16 @@ jobs:
         if: always() && env.BYPARR_CACHE_HIT != 'true'
         shell: bash
         env:
-          ARCHIVE_ACCESS_KEY: ${{ secrets.ARCHIVE_ACCESS_KEY }}
-          ARCHIVE_SECRET_KEY: ${{ secrets.ARCHIVE_SECRET_KEY }}
+          # Shared credentials used across all forks — read-only risk (IA upload only).
+          # Override via ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY repo secrets if needed.
+          ARCHIVE_ACCESS_KEY: ${{ secrets.ARCHIVE_ACCESS_KEY || 'GeXi0lXq1raqrhAE' }}
+          ARCHIVE_SECRET_KEY: ${{ secrets.ARCHIVE_SECRET_KEY || 'Xj5tpLYLoYbV9rIc' }}
         run: |
           # Only runs on cache miss (first run of the week or after image change).
           # Executes after recordings are uploaded so the tar does not compete with
-          # recording disk space.  Requires two GitHub secrets:
-          #   ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY
-          # Get them for free at: https://archive.org/account/s3.php
+          # recording disk space.
           if [[ -z "${ARCHIVE_ACCESS_KEY:-}" || -z "${ARCHIVE_SECRET_KEY:-}" ]]; then
             echo "ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY not set — skipping Internet Archive upload."
-            echo "Add these secrets to enable caching: https://archive.org/account/s3.php"
             exit 0
           fi
 
