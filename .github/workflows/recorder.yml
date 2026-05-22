@@ -111,41 +111,17 @@ jobs:
             *)   echo "WARNING: unexpected response (HTTP $HTTP_CODE)." ;;
           esac
 
-      - name: Pre-pull Byparr image
+      - name: Start Byparr in background
         shell: bash
         run: |
-          set -euo pipefail
-          echo "Pulling Byparr image (~2.9 GB)..."
-          docker compose pull byparr
-          echo "Byparr image pulled."
-
-      - name: Start Byparr
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Starting Byparr..."
-          docker compose up -d byparr
-
-          echo "=== Container status after byparr start ==="
-          docker compose ps -a
-
-          # Poll /health — this endpoint returns 200 as soon as the FastAPI server
-          # is up and the Playwright browser is initialised. /docs triggers an
-          # internal wait_for_load_state("networkidle") that always times out
-          # during container startup and is NOT a reliable readiness signal.
-          echo "Waiting for Byparr /health endpoint..."
-          for attempt in {1..90}; do
-            if curl -fsSL --max-time 5 http://localhost:8191/health >/dev/null 2>&1; then
-              echo "Byparr is ready (attempt $attempt)"
-              break
-            fi
-            if (( attempt == 90 )); then
-              echo "WARNING: Byparr did not become ready after $((90 * 4))s — continuing anyway (cookie-refresher will retry)"
-              docker compose logs --tail=30 byparr || true
-            fi
-            sleep 4
-          done
+          # Pull and start Byparr entirely in the background so it does not block
+          # the chaturbate-dvr build.  The recorder loop tolerates a slow start —
+          # the cookie-refresher will retry until Byparr is healthy.
+          echo "Pulling and starting Byparr in background (~2.9 GB pull)..."
+          nohup bash -c 'docker compose pull byparr && docker compose up -d byparr' \
+            > /tmp/byparr-start.log 2>&1 &
+          echo $! > /tmp/byparr-start.pid
+          echo "Byparr pull+start running in background (PID $(cat /tmp/byparr-start.pid))"
 
       - name: Build and start chaturbate-dvr
         shell: bash
