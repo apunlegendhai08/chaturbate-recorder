@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       duration_hours:
-        description: Recording duration in hours (1-5)
+        description: "Recording duration in hours (1-4). Max 4: setup (~20 min) + recording + uploads (~40 min) must stay under the 6-hour GitHub Actions limit."
         required: false
-        default: "5"
+        default: "4"
   push:
     branches:
       - main
@@ -78,14 +78,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          duration="${{ inputs.duration_hours || '5' }}"
+          duration="${{ inputs.duration_hours || '4' }}"
           if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
             echo "duration_hours must be a whole number."
             exit 1
           fi
 
-          if (( duration < 1 || duration > 5 )); then
-            echo "duration_hours must be between 1 and 5 on GitHub-hosted runners."
+          # Max 4 h: setup (~20 min) + recording + stop/uploads (~40 min) must
+          # fit inside the 6-hour GitHub Actions job timeout (360 min).
+          # duration=5 leaves only ~20 min total for setup+uploads — not enough.
+          if (( duration < 1 || duration > 4 )); then
+            echo "duration_hours must be between 1 and 4 on GitHub-hosted runners (5 h exceeds the 6 h job limit when setup+upload time is included)."
             exit 1
           fi
 
@@ -323,12 +326,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          finish_at="$(($(date +%s) + ${DURATION_HOURS:-0} * 3600))"
-          echo "Recording for ${DURATION_HOURS:-0} hour(s) — finishing at $(date -d @${finish_at} '+%H:%M:%S UTC')"
-          if (( finish_at <= $(date +%s) )); then
-            echo "ERROR: DURATION_HOURS (${DURATION_HOURS:-unset}) is invalid — cannot continue"
+          # Guard: DURATION_HOURS must be a positive integer. The validate step
+          # exports it, but a defensive check here prevents a silent 0-hour run
+          # if the env var was somehow lost between steps.
+          if [[ -z "${DURATION_HOURS:-}" ]] || ! [[ "${DURATION_HOURS}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: DURATION_HOURS is '${DURATION_HOURS:-unset}' — must be a positive integer. Check the 'Validate configuration' step output."
             exit 1
           fi
+
+          finish_at="$(( $(date +%s) + DURATION_HOURS * 3600 ))"
+          echo "Recording for ${DURATION_HOURS} hour(s) — finishing at $(date -d @${finish_at} '+%H:%M:%S UTC')"
 
           stop_recorder() {
             echo "=== Stopping recorder gracefully (waiting up to 50 min for uploads+Supabase) ==="
@@ -445,9 +452,15 @@ jobs:
             exit 0
           fi
 
+          # Cap at 4 h so every self-queued run stays within the 6-hour GH Actions
+          # job timeout after accounting for setup (~20 min) and upload (~40 min).
+          next_duration="${{ steps.config.outputs.duration }}"
+          if (( next_duration > 4 )); then
+            next_duration=4
+          fi
           gh workflow run "$GITHUB_WORKFLOW" --repo "$GITHUB_REPOSITORY" \
-            -f duration_hours="${{ steps.config.outputs.duration }}"
-          echo "Queued the next recorder run."
+            -f duration_hours="${next_duration}"
+          echo "Queued the next recorder run (duration: ${next_duration}h)."
 
       - name: Cleanup
         if: always()

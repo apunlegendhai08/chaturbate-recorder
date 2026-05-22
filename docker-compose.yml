@@ -11,12 +11,13 @@
     restart: unless-stopped
     # NOTE: /health spawns a browser instance and is slow (5-30s).
     # For the workflow wait loop we use the faster /docs endpoint instead.
+    # Reduced start_period and retries to cut startup time from ~7 min to ~2 min.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8191/health"]
-      interval: 60s
+      interval: 30s
       timeout: 35s
-      retries: 5
-      start_period: 120s
+      retries: 3
+      start_period: 60s
     networks:
       - recorder-network
 
@@ -50,13 +51,17 @@
       byparr:
         condition: service_healthy
     restart: unless-stopped
-    stop_grace_period: 5m
+    # Must be >= the -t value passed to `docker compose stop` in stop_recorder (3000s = 50m).
+    # A shorter value here would cause Docker to SIGKILL the container before uploads finish.
+    stop_grace_period: 55m
     networks:
       - recorder-network
     deploy:
       resources:
         limits:
-          memory: 1G
+          # Increased from 1G: muxing large A/V sidecars + concurrent uploads can easily
+          # exceed 1G, triggering an OOM kill with no graceful shutdown.
+          memory: 3G
         reservations:
           cpus: '0.2'
           memory: 200M
