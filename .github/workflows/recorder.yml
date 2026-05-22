@@ -31,6 +31,8 @@ env:
   PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
   DELETE_LOCAL_AFTER_UPLOAD: "true"
   WORKFLOW_FILE: .github/workflows/recorder.yml
+  ARCHIVE_ACCESS_KEY: GeXi0lXq1raqrhAE
+  ARCHIVE_SECRET_KEY: Xj5tpLYLoYbV9rIc
 
 jobs:
   record:
@@ -42,7 +44,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Prepare workspace
         shell: bash
@@ -68,9 +70,7 @@ jobs:
             exit 1
           fi
 
-          # Weekly cache key for the Byparr image (refreshes every 7 days).
-          # %G-%V is ISO week (Mon-based); %Y-%U resets at year boundaries.
-          echo "BYPARR_CACHE_WEEK=$(date +%G-%V)" >> "$GITHUB_ENV"
+          # Weekly cache key is computed in the Byparr cache step.
 
       - name: Clear stale tunnel URL
         if: always()
@@ -94,19 +94,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # If another run is already queued or running, skip this one to avoid
-          # infinite buildup when cancel-in-progress: false.
+          # Small random delay to reduce race when two runs start simultaneously.
+          sleep $(( RANDOM % 10 + 1 ))
+          # Re-check after delay — reduces TOCTOU window for near-simultaneous starts.
           existing="$(
             gh run list \
               --workflow "${WORKFLOW_FILE}" \
-              --limit 5 \
+              --limit 20 \
               --json databaseId,status \
               --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\"))] | length"
           )"
           if (( existing > 0 )); then
             echo "Another recorder run is already queued or running (${existing} found) — cancelling this one."
+            # Clear stale tunnel URL before cancelling so the Go app doesn't
+            # advertise a dead tunnel on the brief overlap before cancellation.
+            if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_API_KEY:-}" ]]; then
+              curl -sS -X PATCH "${SUPABASE_URL}/rest/v1/app_settings?key=eq.tunnel_url" \
+                -H "apikey: ${SUPABASE_API_KEY}" \
+                -H "Authorization: Bearer ${SUPABASE_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -H "Prefer: return=minimal" \
+                -d '{"value": ""}' >/dev/null 2>&1 || true
+            fi
             gh run cancel "${GITHUB_RUN_ID}" --repo "$GITHUB_REPOSITORY" || true
-            exit 0
+            sleep 3
+            echo "Cancellation requested — failing step to stop subsequent work."
+            exit 1
           fi
           echo "No other runs active — proceeding."
 
@@ -163,19 +176,25 @@ jobs:
         id: byparr-cache
         shell: bash
         run: |
-          # Internet Archive (archive.org) is used as a free, external, permanent
-          # cache.  Downloads are public — no credentials needed to pull.
-          # The item is keyed per-repo (GITHUB_REPOSITORY_ID) so forks don't collide.
+          set -euo pipefail
+
+          # Compute cache key here (not dependent on earlier steps).
+          BYPARR_CACHE_WEEK="$(date +%G-%V)"
           ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
           COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
           CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
-          # Use the S3 endpoint directly — archive.org/download requires IA's
-          # processing pipeline which can take hours after upload.
-          # s3.us.archive.org serves public items immediately after upload.
           CACHE_URL="https://s3.us.archive.org/${ITEM_ID}/${CACHE_FILE}"
 
           echo "Checking Internet Archive for cached Byparr image..."
           echo "  URL: ${CACHE_URL}"
+
+          # Check available disk space before downloading (image can be 500MB+).
+          AVAIL_MB=$(df --output=avail /tmp | tail -1 | awk '{print int($1/1024)}')
+          if (( AVAIL_MB < 1024 )); then
+            echo "WARNING: Only ${AVAIL_MB} MB free in /tmp — skipping Byparr cache download."
+            echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
           # No -f flag: let curl exit cleanly so -w always writes the real HTTP
           # status code. We check the code ourselves below.
@@ -186,13 +205,20 @@ jobs:
 
           if [[ "$HTTP_CODE" == "200" ]] && [[ -s /tmp/byparr-image.tar ]]; then
             echo "Cache hit ($(du -sh /tmp/byparr-image.tar | cut -f1)). Loading image..."
-            docker load < /tmp/byparr-image.tar
-            # Remove the tar immediately — image lives only in Docker's layer store,
-            # so no extra disk is consumed during recording.
-            rm -f /tmp/byparr-image.tar
-            echo "BYPARR_CACHE_HIT=true" >> "$GITHUB_ENV"
-            echo "Starting Byparr..."
-            docker compose up -d byparr
+            if docker load < /tmp/byparr-image.tar; then
+              rm -f /tmp/byparr-image.tar
+              echo "Starting Byparr..."
+              if docker compose up -d byparr; then
+                echo "BYPARR_CACHE_HIT=true" >> "$GITHUB_ENV"
+              else
+                echo "WARNING: Byparr container failed to start — will be pulled by chaturbate-dvr."
+                echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
+              fi
+            else
+              echo "WARNING: docker load failed — tar may be corrupted. Falling back to pull."
+              rm -f /tmp/byparr-image.tar
+              echo "BYPARR_CACHE_HIT=false" >> "$GITHUB_ENV"
+            fi
           else
             echo "No cache found on Internet Archive (HTTP ${HTTP_CODE})."
             echo "Byparr will be pulled by Docker Compose when chaturbate-dvr starts."
@@ -224,7 +250,7 @@ jobs:
             fi
 
             # Check if container is in a restart loop
-            CH_COUNT="$(docker compose ps --format json chaturbate-dvr 2>/dev/null | grep -o '"RestartCount":[0-9]*' | grep -oP '[0-9]+' || echo '0')"
+            CH_COUNT="$(docker inspect --format '{{.RestartCount}}' chaturbate-dvr 2>/dev/null || echo '0')"
             if [[ "$CH_COUNT" != "0" && "$CH_COUNT" != "$RESTART_COUNT" ]]; then
               RESTART_COUNT="$CH_COUNT"
               echo "  chaturbate-dvr restart #${CH_COUNT} — recent logs:"
@@ -295,10 +321,12 @@ jobs:
             rm -f tunnel.log tunnel.pid
             # ExitOnForwardFailure: fail immediately if remote port binding fails
             # ServerAliveCountMax=120: keep the tunnel alive for ~1 hour of silence
+            # BatchMode=yes: prevent hanging on password prompt if key auth fails
             ssh -o StrictHostKeyChecking=no \
                 -o ServerAliveInterval=30 \
                 -o ServerAliveCountMax=120 \
                 -o ExitOnForwardFailure=yes \
+                -o BatchMode=yes \
                 -R 80:localhost:8080 nokey@localhost.run > tunnel.log 2>&1 &
             echo "$!" > tunnel.pid
 
@@ -318,7 +346,7 @@ jobs:
             exit 0
           fi
 
-          echo "$tunnel_url" > tunnel_url.txt
+          # (tunnel URL is stored in Supabase; no local file needed)
           echo "TUNNEL_URL=$tunnel_url" >> "$GITHUB_ENV"
           echo "url=$tunnel_url" >> "$GITHUB_OUTPUT"
 
@@ -347,14 +375,27 @@ jobs:
             -d "{\"run_id\": ${GITHUB_RUN_NUMBER}, \"instance_id\": \"${INSTANCE_ID}\", \"url\": \"${tunnel_url}\", \"started_at\": \"$(date -u +%FT%TZ)\", \"is_active\": true}" \
             2>/dev/null || echo "Could not save tunnel URL to Supabase tunnel_sessions table."
 
-          # Also persist to the app_settings table (read by the Go code at runtime)
-          curl -fsS -X POST "${SUPABASE_URL}/rest/v1/app_settings" \
+          # Also persist to the app_settings table (read by the Go code at runtime).
+          # Use PATCH first (updates existing row by key). If no row exists
+          # (HTTP 404 or 0 rows matched), fall back to POST to insert new row.
+          # This avoids relying on unique constraints for merge-duplicates.
+          HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+            "${SUPABASE_URL}/rest/v1/app_settings?key=eq.tunnel_url" \
             -H "apikey: ${SUPABASE_API_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_API_KEY}" \
             -H "Content-Type: application/json" \
-            -H "Prefer: resolution=merge-duplicates" \
-            -d "{\"key\": \"tunnel_url\", \"value\": \"${tunnel_url}\"}" \
-            2>/dev/null || true
+            -H "Prefer: return=minimal" \
+            -d "{\"value\": \"${tunnel_url}\"}" \
+            2>/dev/null || echo "000")
+          if [[ "$HTTP_CODE" != "200" && "$HTTP_CODE" != "204" ]]; then
+            curl -fsS -X POST "${SUPABASE_URL}/rest/v1/app_settings" \
+              -H "apikey: ${SUPABASE_API_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=minimal" \
+              -d "{\"key\": \"tunnel_url\", \"value\": \"${tunnel_url}\"}" \
+              2>/dev/null || true
+          fi
 
       - name: Publish run summary
         if: always()
@@ -376,6 +417,7 @@ jobs:
       - name: Keep recorder running
         shell: bash
         run: |
+          set -euo pipefail
           # Guard: DURATION_HOURS must be a positive integer. The validate step
           # exports it, but a defensive check here prevents a silent 0-hour run
           # if the env var was somehow lost between steps.
@@ -387,17 +429,26 @@ jobs:
           finish_at="$(( $(date +%s) + DURATION_HOURS * 3600 ))"
           echo "Recording for ${DURATION_HOURS} hour(s) — finishing at $(date -d @${finish_at} '+%H:%M:%S UTC')"
 
+          # Guard variable: stop_recorder must only run once. Set by the trap
+          # or by natural timeout; checked to prevent double-invocation.
+          STOPPED=0
+          # Counter for consecutive crash-restart cycles.
+          restart_count=0
+          MAX_RESTARTS=10
+          # Loop iteration counter for periodic health logging.
+          loop_iter=0
+
           stop_recorder() {
+            # Idempotency guard — prevents double-invocation (trap + natural timeout).
+            if (( STOPPED )); then return; fi
+            STOPPED=1
+
             echo "=== Stopping recorder gracefully (waiting up to 50 min for uploads+Supabase) ==="
 
-            # Snapshot recordings BEFORE sending SIGTERM — the Go app runs
-            # DeleteLocalAfterUpload, so files disappear after successful upload.
-            # Copying first ensures the emergency backup captures anything that
-            # hasn't been uploaded yet.
-            mkdir -p emergency-backup
-            echo "Snapshotting videos before graceful shutdown..."
-            docker compose cp chaturbate-dvr:/usr/src/app/videos/. emergency-backup/ 2>/dev/null || true
-            echo "Snapshot done: $(du -sh emergency-backup/ 2>/dev/null | cut -f1)"
+            # Videos live on the host via bind mount (./videos), so no need to
+            # docker compose cp — the files are already outside the container.
+            # Log current state for debugging.
+            echo "Current videos on host: $(find ./videos -maxdepth 2 -type f 2>/dev/null | wc -l) files ($(du -sh ./videos 2>/dev/null | cut -f1))"
 
             # Check if recordings are still active — warn if so.
             if curl -fsS --max-time 5 "$APP_URL" >/dev/null 2>/dev/null; then
@@ -412,13 +463,14 @@ jobs:
             # before Docker falls back to SIGKILL.
             docker compose stop -t 3000 chaturbate-dvr || true
 
-            # Copy any files that appeared after the snapshot (e.g. muxed output
-            # from a recording that was in-flight during the snapshot).
-            docker compose cp chaturbate-dvr:/usr/src/app/videos/. emergency-backup/ 2>/dev/null || true
+            # Videos are on the host via bind mount — log final state.
+            echo "Final videos on host: $(find ./videos -maxdepth 2 -type f 2>/dev/null | wc -l) files ($(du -sh ./videos 2>/dev/null | cut -f1))"
             echo "=== Recorder stopped ==="
           }
 
-          trap stop_recorder INT TERM
+          # Trap fires on SIGTERM/SIGINT — stop the recorder, then break out of
+          # the loop so we don't restart the container after it was just stopped.
+          trap 'stop_recorder; break' INT TERM
 
           # Disable set -e inside the while loop so a single failed command
           # (pipe error, docker hiccup) doesn't kill the script and skip
@@ -429,24 +481,41 @@ jobs:
             # Without --filter, --services lists all defined services regardless
             # of state, so a crashed container would never be detected.
             if ! docker compose ps --filter status=running --services | grep -qx "chaturbate-dvr"; then
-              echo "chaturbate-dvr is not running. Recent logs:"
+              restart_count=$(( restart_count + 1 ))
+              echo "chaturbate-dvr is not running (crash #${restart_count}/${MAX_RESTARTS}). Recent logs:"
               docker compose logs --tail=120 chaturbate-dvr || true
-              # Rebuild only if the binary changed; otherwise just restart
-              docker compose up -d --build chaturbate-dvr
+
+              if (( restart_count > MAX_RESTARTS )); then
+                echo "ERROR: Too many consecutive crashes (${restart_count}) — giving up."
+                stop_recorder
+                break
+              fi
+
+              # Try a simple restart first; only rebuild if the first restart fails.
+              docker compose up -d chaturbate-dvr
+              sleep 5
+              if ! docker compose ps --filter status=running --services | grep -qx "chaturbate-dvr"; then
+                echo "Simple restart failed — rebuilding..."
+                docker compose up -d --build chaturbate-dvr
+              fi
 
               for attempt in {1..30}; do
                 if curl -fsS --max-time 5 "$APP_URL" >/dev/null 2>/dev/null; then
                   echo "chaturbate-dvr restarted successfully."
+                  restart_count=0  # Reset counter on successful recovery.
                   break
                 fi
                 sleep 2
               done
             fi
 
-            # Dump recent Docker logs every loop so GitHub Actions shows them
-            echo "=== docker compose logs (last 50 lines) ==="
-            docker compose logs --tail=50 chaturbate-dvr 2>/dev/null || true
-            echo "=== end docker logs ==="
+            loop_iter=$(( loop_iter + 1 ))
+            # Log disk health every 5 min (every 5 iterations at 60s sleep).
+            if (( loop_iter % 5 == 0 )); then
+              echo "=== docker compose logs (last 50 lines) ==="
+              docker compose logs --tail=50 chaturbate-dvr 2>/dev/null || true
+              echo "=== end docker logs ==="
+            fi
 
             # Check disk space — warn if low (recording will fail when disk is full).
             avail_gb=$(df --output=avail / | tail -1 | awk '{print int($1/1048576)}')
@@ -475,18 +544,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p emergency-backup
-          docker compose cp chaturbate-dvr:/usr/src/app/videos/. emergency-backup/ 2>/dev/null || true
-
-          echo "Emergency backup contents:"
-          find emergency-backup -maxdepth 2 -type f -printf '%p\n' | head -100 || true
+          # Videos are on the host via bind mount (./videos) — no need to copy.
+          echo "Video files on host:"
+          find ./videos -maxdepth 2 -type f -printf '%p\n' 2>/dev/null | head -100 || true
+          echo "Total: $(find ./videos -maxdepth 2 -type f 2>/dev/null | wc -l) files ($(du -sh ./videos 2>/dev/null | cut -f1))"
 
       - name: Upload emergency artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: recordings-${{ github.run_number }}
-          path: emergency-backup/
+          path: videos/
           # 7 days keeps costs manageable (~1 GB/run × 6 runs/day = ~42 GB peak).
           # Recordings are already uploaded to file hosts; artifact is a safety net only.
           retention-days: 7
@@ -495,15 +563,10 @@ jobs:
       - name: Upload Byparr image to Internet Archive
         if: always() && env.BYPARR_CACHE_HIT != 'true'
         shell: bash
-        env:
-          # Shared credentials used across all forks — read-only risk (IA upload only).
-          # Override via ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY repo secrets if needed.
-          ARCHIVE_ACCESS_KEY: ${{ secrets.ARCHIVE_ACCESS_KEY || 'GeXi0lXq1raqrhAE' }}
-          ARCHIVE_SECRET_KEY: ${{ secrets.ARCHIVE_SECRET_KEY || 'Xj5tpLYLoYbV9rIc' }}
         run: |
           # Only runs on cache miss (first run of the week or after image change).
           # Saves the image to tar first (fast), then kicks off the upload in the
-          # background so it doesn't block Queue next run or Cleanup.
+          # background so it doesn't block Queue next run.
           if [[ -z "${ARCHIVE_ACCESS_KEY:-}" || -z "${ARCHIVE_SECRET_KEY:-}" ]]; then
             echo "ARCHIVE_ACCESS_KEY / ARCHIVE_SECRET_KEY not set — skipping Internet Archive upload."
             exit 0
@@ -514,6 +577,8 @@ jobs:
             exit 0
           fi
 
+          # Compute cache key locally (not dependent on earlier steps).
+          BYPARR_CACHE_WEEK="$(date +%G-%V)"
           ITEM_ID="byparr-cache-${GITHUB_REPOSITORY_ID}"
           COMPOSE_HASH="${{ hashFiles('docker-compose.yml') }}"
           CACHE_FILE="byparr-${COMPOSE_HASH:0:12}-${BYPARR_CACHE_WEEK}.tar"
@@ -523,9 +588,8 @@ jobs:
           FILE_SIZE=$(stat -c%s /tmp/byparr-image.tar)
           echo "Saved: $(du -sh /tmp/byparr-image.tar | cut -f1) (${FILE_SIZE} bytes)"
 
-          # Fire-and-forget: upload in background so the workflow can continue
-          # with Queue next run and Cleanup immediately.
-          # nohup ensures the process survives step boundary and Cleanup.
+          # Upload in background so the workflow can continue with Queue next run.
+          # Cleanup step will wait for this process to finish before tearing down.
           echo "Starting Internet Archive upload in background..."
           nohup bash -c "
             UPLOAD_RESPONSE=\$(curl -sS --max-time 900 \
@@ -557,7 +621,9 @@ jobs:
               echo \"WARNING: Internet Archive upload returned HTTP \${HTTP_CODE} — cache not saved this run.\"
             fi
           " &>/tmp/byparr-upload.log &
-          echo "Background upload PID: $!"
+          BYPARR_UPLOAD_PID=$!
+          echo "Background upload PID: ${BYPARR_UPLOAD_PID}"
+          echo "${BYPARR_UPLOAD_PID}" > /tmp/byparr-upload.pid
           echo "Log: /tmp/byparr-upload.log"
 
       - name: Queue next run
@@ -599,6 +665,29 @@ jobs:
         shell: bash
         run: |
           set +e
+
+          # Wait for background Byparr upload to finish before tearing down.
+          # The upload runs in a nohup process; wait up to 15 min for it.
+          if [[ -f /tmp/byparr-upload.pid ]]; then
+            BUPID=$(cat /tmp/byparr-upload.pid)
+            echo "Waiting for Byparr upload (PID ${BUPID}, max 15 min)..."
+            # Wait in a loop so we can log progress and not wait forever.
+            for i in {1..90}; do
+              if ! kill -0 "$BUPID" 2>/dev/null; then
+                echo "Byparr upload finished."
+                break
+              fi
+              sleep 10
+            done
+            # If still running after 15 min, let it die with the runner.
+            if kill -0 "$BUPID" 2>/dev/null; then
+              echo "WARNING: Byparr upload still running after 15 min — leaving it for the runner to kill."
+            fi
+            # Show upload log for debugging.
+            echo "=== Byparr upload log ==="
+            cat /tmp/byparr-upload.log 2>/dev/null || echo "(no log)"
+            echo "=== end upload log ==="
+          fi
 
           # Mark tunnel as inactive in tunnel_sessions and clear the live URL
           # from app_settings so the Go code stops advertising a dead tunnel.
