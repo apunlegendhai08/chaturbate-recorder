@@ -726,8 +726,10 @@ jobs:
           pkill -f cloudflared 2>/dev/null || true
 
           # Stop containers and clean up
+          # Use -t 10 to override the 55m stop_grace_period in docker-compose.yml;
+          # on cancel we don't want to wait 55 minutes for SIGKILL.
           echo "Stopping services..."
-          docker compose down --remove-orphans --volumes 2>/dev/null || true
+          docker compose down --remove-orphans --volumes -t 10 2>/dev/null || true
           docker image prune -f 2>/dev/null || true
 
           echo "Cleanup complete."
