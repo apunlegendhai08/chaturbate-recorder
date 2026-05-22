@@ -33,8 +33,202 @@ env:
   WORKFLOW_FILE: .github/workflows/recorder.yml
 
 jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1: Recover orphaned recordings from previous runs
+  # Runs first, before any new recording starts.  Downloads recording artifacts
+  # from the last 12 hours, starts a short-lived Go container to mux + upload
+  # every orphaned file and persist results to Supabase, then shuts down cleanly.
+  # The `record` job always runs afterwards regardless of this job's outcome.
+  # ─────────────────────────────────────────────────────────────────────────────
+  recover-orphans:
+    name: Recover orphaned recordings
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p videos database emergency-backup
+          touch .env
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Find and download recent recording artifacts
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Only consider artifacts created in the last 12 hours so we don't
+          # re-process recordings from days ago that were already handled.
+          cutoff=$(date -u -d '12 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          echo "Searching for recording artifacts created after: $cutoff"
+
+          # Fetch artifact list, filter in jq, output one line per artifact.
+          mapfile -t artifact_lines < <(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=30" | \
+            jq -r --arg cutoff "$cutoff" --arg run_id "${GITHUB_RUN_ID}" '
+              .artifacts[]
+              | select(
+                  (.name | startswith("recordings-")) and
+                  .expired == false and
+                  .created_at > $cutoff and
+                  (.workflow_run.id | tostring) != $run_id
+                )
+              | "\(.id) \(.size_in_bytes) \(.name)"
+            '
+          ) || true
+
+          downloaded=0
+          for line in "${artifact_lines[@]:-}"; do
+            [[ -z "$line" ]] && continue
+            read -r art_id art_size art_name <<< "$line"
+
+            # Skip artifacts over 500 MB to avoid very long downloads.
+            if (( art_size > 524288000 )); then
+              size_mb=$(( art_size / 1048576 ))
+              echo "Skipping $art_name (${size_mb} MB — over 500 MB limit)"
+              continue
+            fi
+
+            size_mb=$(( art_size / 1048576 ))
+            echo "Downloading $art_name (${size_mb} MB)..."
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${art_id}/zip" \
+                > "artifact_${art_id}.zip" 2>/dev/null; then
+              if unzip -o "artifact_${art_id}.zip" -d videos/ >/dev/null 2>&1; then
+                echo "  ✓ Extracted $art_name"
+                downloaded=$(( downloaded + 1 ))
+              else
+                echo "  WARNING: extraction failed for $art_name"
+              fi
+              rm -f "artifact_${art_id}.zip"
+            else
+              echo "  WARNING: download failed for $art_name"
+              rm -f "artifact_${art_id}.zip"
+            fi
+          done
+
+          echo ""
+          echo "=== Orphan scan ==="
+          echo "Artifacts downloaded: $downloaded"
+          total_files=$(find ./videos -type f 2>/dev/null | wc -l)
+          sidecar_files=$(find ./videos \( -name "*.video.mp4" -o -name "*.audio.mp4" \) 2>/dev/null | wc -l)
+          echo "Total files in videos/: $total_files"
+          echo "Sidecar files needing mux/upload: $sidecar_files"
+          if (( total_files > 0 )); then
+            echo "File listing:"
+            find ./videos -type f 2>/dev/null | sort | head -50 || true
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No orphaned files found — nothing to recover."
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and start chaturbate-dvr
+        if: steps.artifacts.outputs.has_work == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Starting chaturbate-dvr for orphan recovery..."
+          docker compose up -d --build chaturbate-dvr
+          echo "Container started."
+
+      - name: Wait for web UI
+        if: steps.artifacts.outputs.has_work == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..60}; do
+            if curl -fsS --max-time 5 http://localhost:8080 >/dev/null 2>&1; then
+              echo "Web UI is ready (attempt $attempt)"
+              exit 0
+            fi
+            if (( attempt % 10 == 0 )); then
+              echo "  [${attempt}s elapsed] still waiting — container state:"
+              docker compose ps chaturbate-dvr 2>/dev/null | tail -3 || true
+              docker compose logs --tail=20 chaturbate-dvr 2>/dev/null || true
+            fi
+            sleep 2
+          done
+          echo "ERROR: Web UI did not become ready in 120 s"
+          docker compose logs --tail=100 chaturbate-dvr || true
+          exit 1
+
+      - name: Wait for orphan uploads to complete
+        if: steps.artifacts.outputs.has_work == 'true'
+        shell: bash
+        run: |
+          # The Go app runs CleanupOrphanedFiles automatically on startup.
+          # It muxes split A/V pairs, uploads every file to configured hosts,
+          # saves results to Supabase, then deletes local copies (DELETE_LOCAL_AFTER_UPLOAD=true).
+          # We poll until all sidecar/orphan files are gone or we detect a stall.
+          echo "Monitoring CleanupOrphanedFiles progress..."
+
+          prev_sidecar=-1
+          stall_ticks=0
+          MAX_STALL_TICKS=20  # 20 × 30 s = 10 min with no progress → give up
+
+          for tick in $(seq 1 160); do
+            sidecar=$(find ./videos \( -name "*.video.mp4" -o -name "*.audio.mp4" \) 2>/dev/null | wc -l)
+            total=$(find ./videos -type f 2>/dev/null | wc -l)
+            echo "[$(date -u '+%H:%M:%S')] Files: $total total  |  Sidecars remaining: $sidecar"
+
+            if (( total == 0 )); then
+              echo "✓ All orphaned files uploaded and removed."
+              break
+            fi
+
+            if (( sidecar == prev_sidecar )); then
+              stall_ticks=$(( stall_ticks + 1 ))
+              if (( stall_ticks >= MAX_STALL_TICKS )); then
+                echo "WARNING: Sidecar count unchanged for 10 minutes — possible upload stall."
+                echo "Remaining files:"
+                find ./videos -type f 2>/dev/null | sort | head -30 || true
+                echo "Recent container logs:"
+                docker compose logs --tail=50 chaturbate-dvr 2>/dev/null || true
+                break
+              fi
+            else
+              stall_ticks=0
+            fi
+
+            prev_sidecar=$sidecar
+            sleep 30
+          done
+
+          echo ""
+          echo "=== Orphan recovery complete ==="
+          echo "Files remaining: $(find ./videos -type f 2>/dev/null | wc -l)"
+          find ./videos -type f 2>/dev/null | sort | head -20 || true
+
+      - name: Stop container
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          echo "Stopping container after orphan recovery..."
+          # 120 s grace period so any in-flight upload can finish before SIGKILL.
+          docker compose stop -t 120 chaturbate-dvr || true
+          docker compose down --remove-orphans --volumes 2>/dev/null || true
+          docker image prune -f 2>/dev/null || true
+          echo "Container stopped."
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: Record and upload (main job, always runs after recover-orphans)
+  # ─────────────────────────────────────────────────────────────────────────────
   record:
     name: Record and upload
+    needs: recover-orphans
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
