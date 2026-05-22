@@ -129,7 +129,9 @@ jobs:
           echo "Checking Internet Archive for cached Byparr image..."
           echo "  URL: ${CACHE_URL}"
 
-          HTTP_CODE=$(curl -fsSL --max-time 300 \
+          # No -f flag: let curl exit cleanly so -w always writes the real HTTP
+          # status code. We check the code ourselves below.
+          HTTP_CODE=$(curl -sSL --max-time 300 \
             -o /tmp/byparr-image.tar \
             -w '%{http_code}' \
             "${CACHE_URL}" 2>/dev/null || echo "000")
