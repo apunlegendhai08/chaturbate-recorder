@@ -62,6 +62,9 @@ jobs:
           echo "Disk space:"
           df -h /
 
+          # Weekly cache key for the Byparr image (refreshes every 7 days)
+          echo "BYPARR_CACHE_WEEK=$(date +%Y-%U)" >> "$GITHUB_ENV"
+
       - name: Validate configuration
         id: config
         shell: bash
@@ -111,17 +114,38 @@ jobs:
             *)   echo "WARNING: unexpected response (HTTP $HTTP_CODE)." ;;
           esac
 
+      - name: Restore Byparr image cache
+        id: byparr-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/byparr-image.tar
+          # Bust cache when docker-compose.yml changes (e.g. new image tag) or weekly
+          # so security updates are picked up automatically.
+          key: byparr-${{ hashFiles('docker-compose.yml') }}-${{ env.BYPARR_CACHE_WEEK }}
+          restore-keys: |
+            byparr-${{ hashFiles('docker-compose.yml') }}-
+
       - name: Start Byparr in background
         shell: bash
         run: |
-          # Pull and start Byparr entirely in the background so it does not block
-          # the chaturbate-dvr build.  The recorder loop tolerates a slow start —
-          # the cookie-refresher will retry until Byparr is healthy.
-          echo "Pulling and starting Byparr in background (~2.9 GB pull)..."
-          nohup bash -c 'docker compose pull byparr && docker compose up -d byparr' \
-            > /tmp/byparr-start.log 2>&1 &
-          echo $! > /tmp/byparr-start.pid
-          echo "Byparr pull+start running in background (PID $(cat /tmp/byparr-start.pid))"
+          # Load from cache (fast, local disk) or pull from registry on miss.
+          # Either way, the container is started in the background so chaturbate-dvr
+          # can build in parallel.  The cookie-refresher retries until Byparr is healthy.
+          if [[ "${{ steps.byparr-cache.outputs.cache-hit }}" == "true" ]]; then
+            echo "Loading Byparr image from cache (no network pull needed)..."
+            docker load < /tmp/byparr-image.tar
+            echo "Image loaded. Starting Byparr in background..."
+            docker compose up -d byparr &
+          else
+            echo "Cache miss — pulling Byparr image (~2.9 GB) and starting in background..."
+            nohup bash -c '
+              docker compose pull byparr &&
+              docker save ghcr.io/thephaseless/byparr:latest -o /tmp/byparr-image.tar &&
+              docker compose up -d byparr
+            ' > /tmp/byparr-start.log 2>&1 &
+            echo $! > /tmp/byparr-start.pid
+            echo "Byparr pull+save+start running in background (PID $(cat /tmp/byparr-start.pid))"
+          fi
 
       - name: Build and start chaturbate-dvr
         shell: bash
